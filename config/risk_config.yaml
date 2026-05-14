@@ -1,0 +1,19 @@
+risk:
+  max_position_size_contracts: 1.0
+  max_correlation_exposure: 0.015    # 1.5% of account on any one correlated cluster
+  stop_loss_atr_multiplier: 1.5
+  take_profit_r_multiple: 2.0
+  trailing_stop_activation_r: 0.5   # activate trail when 0.5R in profit
+  trailing_stop_atr_multiplier: 1.0  # trail by 1 ATR below/above close
+  max_drawdown_halt: 0.10            # 10% account peak DD halts trading
+  max_open_positions: 6              # one per major; correlation filter still applies
+
+  # --- Per-symbol contract value (notional per 1.0 lot) -----------------
+  # Standard FX majors: 100,000 units. Adjust for indices, metals, etc.
+  contract_value_per_symbol:
+    EURUSD: 100000.0
+    GBPUSD: 100000.0
+    USDJPY: 100000.0
+    AUDUSD: 100000.0
+    USDCAD: 100000.0
+    NZDUSD: 100000.0

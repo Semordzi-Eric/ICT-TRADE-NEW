@@ -1,0 +1,40 @@
+model:
+  lightgbm:
+    num_leaves: 31
+    learning_rate: 0.05
+    feature_fraction: 0.8
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    min_data_in_leaf: 50
+    n_estimators: 500
+    objective: binary
+    metric: binary_logloss
+
+  xgboost:
+    max_depth: 6
+    learning_rate: 0.05
+    n_estimators: 500
+    subsample: 0.8
+    colsample_bytree: 0.8
+    objective: "binary:logistic"
+
+  lstm:
+    timesteps: 20
+    units: 64
+    dropout: 0.3
+    learning_rate: 0.001
+    batch_size: 64
+    epochs: 50
+    patience: 5
+
+  ensemble_weights: [0.5, 0.3, 0.2]   # LightGBM, XGBoost, LSTM
+  walk_forward:
+    train_months: 12
+    val_months: 3
+    test_months: 3
+    purge_bars: 5       # drop last N rows from each training fold to avoid label bleed
+
+  retrain_frequency_days: 7
+  min_setups_for_training: 5000
+  concept_drift_threshold_kl: 0.15
+  bayesian_iterations: 50

@@ -1,0 +1,35 @@
+strategy:
+  # ----- Universe -----------------------------------------------------------
+  # Six FX majors. Run on M15. Expected aggregate ~3.5–4 trades/day.
+  symbols:
+    - EURUSD
+    - GBPUSD
+    - USDJPY
+    - AUDUSD
+    - USDCAD
+    - NZDUSD
+  default_timeframe: M15
+
+  # ----- Per-trade & portfolio risk -----------------------------------------
+  risk_per_trade: 0.0035         # 0.35% per trade — 6 concurrent caps total at ~2.1%
+  max_daily_trades: 12           # aggregate across all symbols
+  daily_loss_limit: 0.03         # 3% daily DD halt
+  weekly_loss_limit: 0.06        # 6% weekly DD halt
+  consecutive_loss_limit: 3
+  consecutive_loss_cooldown_hours: 4
+  min_model_probability: 0.65
+
+  # ----- Correlation filter -------------------------------------------------
+  # Pairs that move together — block same-direction concurrent entries.
+  # Format: [symbol_a, symbol_b, threshold]. Threshold is the *minimum*
+  # absolute correlation that triggers the block. The risk manager treats
+  # any listed pair as correlated regardless of realised correlation, so
+  # the threshold is informational unless you wire in a rolling estimator.
+  correlation_filter_pairs:
+    - ["EURUSD", "GBPUSD", 0.85]   # both EUR/USD-driven
+    - ["AUDUSD", "NZDUSD", 0.90]   # commodity-bloc twins
+    - ["EURUSD", "AUDUSD", 0.70]   # USD-side correlation
+    - ["USDJPY", "USDCAD", 0.65]   # USD-base correlation
+    - ["NAS100", "SPX500", 0.95]   # reserved for future indices use
+
+  account_starting_balance: 10000.0

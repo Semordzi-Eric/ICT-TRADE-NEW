@@ -1,0 +1,40 @@
+# Core data / numeric
+pandas>=1.5
+numpy>=1.23
+scipy>=1.10
+
+# ML
+scikit-learn>=1.2
+lightgbm>=3.3
+xgboost>=1.7
+scikit-optimize>=0.9
+
+# Deep learning (optional, for LSTM)
+# tensorflow>=2.12 ; platform_system != "Darwin" or platform_machine != "arm64"
+# On Apple Silicon use:  tensorflow-macos + tensorflow-metal
+
+# Data sources
+yfinance>=0.2
+MetaTrader5>=5.0.45 ; platform_system == "Windows"
+
+# Config / utilities
+pyyaml>=6.0
+joblib>=1.2
+python-dateutil>=2.8
+
+# Plotting / analysis
+matplotlib>=3.6
+seaborn>=0.12
+
+# Technical analysis helpers
+ta>=0.10
+
+# ONNX export / inference
+onnx>=1.14
+onnxmltools>=1.11
+onnxconverter-common>=1.13
+skl2onnx>=1.14
+onnxruntime>=1.15
+
+# Tests
+pytest>=7.2

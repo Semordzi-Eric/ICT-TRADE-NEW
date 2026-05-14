@@ -1,0 +1,239 @@
+"""Vectorised backtest engine.
+
+Walks the bar series once and simulates every signal with realistic SL/TP,
+slippage and commission. Output is a trade list and an equity curve.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import List, Optional
+
+import numpy as np
+import pandas as pd
+
+from ..strategy.rule_based import Signal, position_size
+
+
+@dataclass
+class TradeResult:
+    entry_index: int
+    exit_index: int
+    entry_time: pd.Timestamp
+    exit_time: pd.Timestamp
+    direction: str
+    entry_price: float
+    exit_price: float
+    stop_loss: float
+    take_profit: float
+    volume: float
+    pnl: float
+    r_multiple: float
+    bars_held: int
+    exit_reason: str            # 'tp' | 'sl' | 'time'
+    setup_type: str
+
+
+@dataclass
+class BacktestResult:
+    trades: List[TradeResult]
+    equity_curve: pd.Series
+    starting_balance: float
+    ending_balance: float
+
+    def trades_df(self) -> pd.DataFrame:
+        if not self.trades:
+            return pd.DataFrame()
+        return pd.DataFrame([asdict(t) for t in self.trades])
+
+
+def run_backtest(
+    candles: pd.DataFrame,
+    signals: List[Signal],
+    starting_balance: float = 10_000.0,
+    risk_per_trade: float = 0.005,
+    slippage_pips: float = 0.5,
+    pip_size: float = 0.0001,
+    commission_per_lot: float = 5.0,
+    contract_value: float = 100_000.0,
+    max_holding_bars: int = 24,
+    max_concurrent: int = 3,
+    trail_activation_r: float = 0.5,
+    trail_atr_mult: float = 1.0,
+) -> BacktestResult:
+    """Simulate execution of a list of signals.
+
+    Args:
+        candles: OHLCV DataFrame.
+        signals: list of Signals from the strategy layer.
+        starting_balance: account balance at t0.
+        risk_per_trade: fraction of balance risked on each trade.
+        slippage_pips: applied to both entry and exit, in the adverse direction.
+        pip_size: price units per pip (0.0001 for typical FX, adapt for indices).
+        commission_per_lot: round-turn cost in account currency.
+        contract_value: notional per 1.0 volume (100k for FX).
+        max_holding_bars: time stop.
+        max_concurrent: cap simultaneous open trades.
+    """
+    high = candles["high"].values
+    low = candles["low"].values
+    close = candles["close"].values
+    open_ = candles["open"].values
+    n = len(candles)
+    slippage = slippage_pips * pip_size
+    balance = starting_balance
+    equity = pd.Series(starting_balance, index=candles.index, dtype=float)
+
+    from ..detection.liquidity import _atr as _compute_atr
+    atr_vals = _compute_atr(candles, 14).ffill().fillna(0.0).values
+
+    trades: List[TradeResult] = []
+    open_trades: List[dict] = []
+
+    sigs_by_index = sorted(signals, key=lambda s: s.index)
+    sig_iter = iter(sigs_by_index)
+    next_sig = next(sig_iter, None)
+
+    for i in range(n):
+        # Update open trades — check exits first
+        still_open = []
+        for tr in open_trades:
+            exited = False
+            cur_atr = atr_vals[i] if np.isfinite(atr_vals[i]) and atr_vals[i] > 0 else 0.0
+
+            # --- Update trailing stop ---
+            if cur_atr > 0:
+                if tr["direction"] == "long":
+                    unrealised_r = (close[i] - tr["entry_price"]) / abs(tr["entry_price"] - tr["initial_sl"])
+                    if unrealised_r >= trail_activation_r:
+                        new_trail_sl = close[i] - trail_atr_mult * cur_atr
+                        tr["stop_loss"] = max(tr["stop_loss"], new_trail_sl)
+                else:  # short
+                    unrealised_r = (tr["entry_price"] - close[i]) / abs(tr["entry_price"] - tr["initial_sl"])
+                    if unrealised_r >= trail_activation_r:
+                        new_trail_sl = close[i] + trail_atr_mult * cur_atr
+                        tr["stop_loss"] = min(tr["stop_loss"], new_trail_sl)
+
+            if tr["direction"] == "long":
+                if low[i] <= tr["stop_loss"]:
+                    exit_price = tr["stop_loss"] - slippage
+                    pnl = (exit_price - tr["entry_price"]) * tr["volume"] * contract_value - tr["commission"]
+                    r = (exit_price - tr["entry_price"]) / abs(tr["entry_price"] - tr["stop_loss"])
+                    trades.append(_finalise(tr, i, exit_price, pnl, r, "sl", candles))
+                    balance += pnl
+                    exited = True
+                elif high[i] >= tr["take_profit"]:
+                    exit_price = tr["take_profit"] - slippage
+                    pnl = (exit_price - tr["entry_price"]) * tr["volume"] * contract_value - tr["commission"]
+                    r = (exit_price - tr["entry_price"]) / abs(tr["entry_price"] - tr["stop_loss"])
+                    trades.append(_finalise(tr, i, exit_price, pnl, r, "tp", candles))
+                    balance += pnl
+                    exited = True
+            else:  # short
+                if high[i] >= tr["stop_loss"]:
+                    exit_price = tr["stop_loss"] + slippage
+                    pnl = (tr["entry_price"] - exit_price) * tr["volume"] * contract_value - tr["commission"]
+                    r = (tr["entry_price"] - exit_price) / abs(tr["entry_price"] - tr["stop_loss"])
+                    trades.append(_finalise(tr, i, exit_price, pnl, r, "sl", candles))
+                    balance += pnl
+                    exited = True
+                elif low[i] <= tr["take_profit"]:
+                    exit_price = tr["take_profit"] + slippage
+                    pnl = (tr["entry_price"] - exit_price) * tr["volume"] * contract_value - tr["commission"]
+                    r = (tr["entry_price"] - exit_price) / abs(tr["entry_price"] - tr["stop_loss"])
+                    trades.append(_finalise(tr, i, exit_price, pnl, r, "tp", candles))
+                    balance += pnl
+                    exited = True
+
+            if not exited and i - tr["entry_index"] >= max_holding_bars:
+                exit_price = close[i] - slippage if tr["direction"] == "long" else close[i] + slippage
+                if tr["direction"] == "long":
+                    pnl = (exit_price - tr["entry_price"]) * tr["volume"] * contract_value - tr["commission"]
+                    r = (exit_price - tr["entry_price"]) / abs(tr["entry_price"] - tr["stop_loss"])
+                else:
+                    pnl = (tr["entry_price"] - exit_price) * tr["volume"] * contract_value - tr["commission"]
+                    r = (tr["entry_price"] - exit_price) / abs(tr["entry_price"] - tr["stop_loss"])
+                trades.append(_finalise(tr, i, exit_price, pnl, r, "time", candles))
+                balance += pnl
+                exited = True
+
+            if not exited:
+                still_open.append(tr)
+        open_trades = still_open
+
+        # Open new trade at the OPEN of the bar AFTER the signal bar.
+        # Signal fires at bar index i-1; we execute at open[i] this iteration.
+        # This avoids same-bar entry optimism (using close[i] as entry).
+        while next_sig is not None and next_sig.index < i:
+            if next_sig.index == i - 1 and len(open_trades) < max_concurrent:
+                # Use this bar's open as the realistic entry price.
+                raw_entry = open_[i]
+                entry_price = (
+                    raw_entry + slippage if next_sig.direction == "long"
+                    else raw_entry - slippage
+                )
+                vol = position_size(
+                    balance, risk_per_trade,
+                    entry_price, next_sig.stop_loss,
+                    contract_value=contract_value,
+                )
+                if vol > 0:
+                    commission = commission_per_lot * vol
+                    open_trades.append(
+                        {
+                            "entry_index": i,
+                            "entry_price": entry_price,
+                            "stop_loss": next_sig.stop_loss,
+                            "initial_sl": next_sig.stop_loss,   # for trailing stop R calc
+                            "take_profit": next_sig.take_profit,
+                            "direction": next_sig.direction,
+                            "volume": vol,
+                            "commission": commission,
+                            "setup_type": next_sig.setup_type,
+                        }
+                    )
+            next_sig = next(sig_iter, None)
+
+        # Mark-to-market equity update — closed trade balance only (open MTM omitted)
+        equity.iloc[i] = balance
+
+    # Force-close any still-open trades at the last bar
+    last_i = n - 1
+    for tr in open_trades:
+        exit_price = close[last_i]
+        if tr["direction"] == "long":
+            pnl = (exit_price - tr["entry_price"]) * tr["volume"] * contract_value - tr["commission"]
+            r = (exit_price - tr["entry_price"]) / abs(tr["entry_price"] - tr["stop_loss"])
+        else:
+            pnl = (tr["entry_price"] - exit_price) * tr["volume"] * contract_value - tr["commission"]
+            r = (tr["entry_price"] - exit_price) / abs(tr["entry_price"] - tr["stop_loss"])
+        trades.append(_finalise(tr, last_i, exit_price, pnl, r, "time", candles))
+        balance += pnl
+    equity.iloc[-1] = balance
+
+    return BacktestResult(
+        trades=trades,
+        equity_curve=equity,
+        starting_balance=starting_balance,
+        ending_balance=balance,
+    )
+
+
+def _finalise(tr: dict, exit_i: int, exit_price: float, pnl: float, r: float,
+              reason: str, candles: pd.DataFrame) -> TradeResult:
+    return TradeResult(
+        entry_index=tr["entry_index"],
+        exit_index=exit_i,
+        entry_time=candles.index[tr["entry_index"]],
+        exit_time=candles.index[exit_i],
+        direction=tr["direction"],
+        entry_price=tr["entry_price"],
+        exit_price=float(exit_price),
+        stop_loss=tr["stop_loss"],
+        take_profit=tr["take_profit"],
+        volume=tr["volume"],
+        pnl=float(pnl),
+        r_multiple=float(r),
+        bars_held=exit_i - tr["entry_index"],
+        exit_reason=reason,
+        setup_type=tr["setup_type"],
+    )
