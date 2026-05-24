@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ICT Trading Bot — Dashboard</title>
+  <meta name="description" content="Backtest, train and deploy your ICT trading models with real-time performance analytics." />
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header class="header">
+    <div class="header-brand">
+      <svg class="logo" viewBox="0 0 40 40" fill="none">
+        <rect width="40" height="40" rx="10" fill="#00d4aa" fill-opacity="0.12"/>
+        <path d="M8 28 L14 18 L20 22 L26 12 L32 16" stroke="#00d4aa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="32" cy="16" r="3" fill="#00d4aa"/>
+        <path d="M8 32 L32 32" stroke="#1e2940" stroke-width="1"/>
+      </svg>
+      <h1>ICT<span>Bot</span> <span style="color:var(--text3);font-weight:400">Dashboard</span></h1>
+    </div>
+    <div id="live-badge" class="live-badge">
+      <div class="dot"></div>
+      <span class="dot-text">OFFLINE</span>
+    </div>
+  </header>
+
+  <!-- ── Tab Bar ─────────────────────────────────────────────────────────── -->
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="tab-backtest">
+      <span class="tab-icon">📊</span> Backtest
+    </button>
+    <button class="tab-btn" data-tab="tab-train">
+      <span class="tab-icon">🧠</span> Train
+    </button>
+    <button class="tab-btn" data-tab="tab-models">
+      <span class="tab-icon">📦</span> Models
+    </button>
+    <button class="tab-btn" data-tab="tab-live">
+      <span class="tab-icon">🔴</span> Live
+    </button>
+  </nav>
+
+  <!-- ── Main ────────────────────────────────────────────────────────────── -->
+  <main class="main">
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         TAB 1 — BACKTEST
+    ══════════════════════════════════════════════════════════════════════ -->
+    <div id="tab-backtest" class="tab-panel active">
+
+      <!-- Controls row -->
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-title">Backtest Settings</div>
+        <div class="form-row">
+          <div class="form-group" style="min-width:300px">
+            <label>Symbols</label>
+            <div id="bt-symbol-chips" class="chip-group"></div>
+          </div>
+          <div class="form-group">
+            <label>Timeframe</label>
+            <select id="bt-tf">
+              <option value="M15" selected>M15</option>
+              <option value="M5">M5</option>
+              <option value="M30">M30</option>
+              <option value="H1">H1</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Starting Balance ($)</label>
+            <input type="number" id="bt-balance" value="10000" min="1000" step="1000" />
+          </div>
+          <div class="form-group" style="justify-content:flex-end">
+            <button id="bt-run-btn" class="btn btn-primary">▶ Run Backtest</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Data status -->
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-title">Cached Data</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Symbol</th><th>Timeframe</th><th>Bars</th><th>Quality</th></tr>
+            </thead>
+            <tbody id="data-table-body">
+              <tr><td colspan="4" style="text-align:center;color:var(--text3)">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Log -->
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-title">Live Log</div>
+        <div id="bt-log" class="log-box">Waiting for backtest…</div>
+      </div>
+
+      <!-- Results -->
+      <div id="bt-results-area" style="display:none">
+
+        <!-- Symbol switcher -->
+        <div id="bt-sym-tabs" class="sym-tabs"></div>
+
+        <!-- Metric cards -->
+        <div id="bt-metrics-grid" class="grid-3" style="margin-bottom:18px"></div>
+
+        <!-- Detection counts -->
+        <div class="card" style="margin-bottom:18px">
+          <div class="card-title">ICT Pattern Counts</div>
+          <div id="bt-detection-counts" class="grid-4" style="gap:10px"></div>
+        </div>
+
+        <!-- Equity curve -->
+        <div class="card" style="margin-bottom:18px">
+          <div class="card-title">Equity Curve &amp; Drawdown</div>
+          <div class="chart-wrap" style="height:320px">
+            <canvas id="bt-equity-chart"></canvas>
+          </div>
+        </div>
+
+        <!-- Trades table -->
+        <div class="card">
+          <div class="card-title">Recent Trades (last 50)</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th><th>Dir</th><th>Setup</th><th>Entry</th>
+                  <th>PnL</th><th>R-Multiple</th><th>Exit</th><th>Bars</th>
+                </tr>
+              </thead>
+              <tbody id="bt-trades-body">
+                <tr><td colspan="8" style="text-align:center;color:var(--text3)">Run a backtest to see trades</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /bt-results-area -->
+    </div><!-- /tab-backtest -->
+
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         TAB 2 — TRAIN
+    ══════════════════════════════════════════════════════════════════════ -->
+    <div id="tab-train" class="tab-panel">
+
+      <div class="grid-2" style="margin-bottom:18px; align-items:start">
+
+        <!-- Training config -->
+        <div class="card">
+          <div class="card-title">Training Configuration</div>
+          <div class="form-row" style="flex-direction:column; align-items:stretch; gap:14px">
+            <div class="form-group">
+              <label>Symbol</label>
+              <select id="train-symbol">
+                <option value="EURUSD">EURUSD</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Timeframe</label>
+              <select id="train-tf">
+                <option value="M15">M15</option>
+                <option value="M5">M5</option>
+                <option value="H1">H1</option>
+              </select>
+            </div>
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px">
+              <div style="font-size:0.78rem;color:var(--text3);font-weight:600;margin-bottom:8px">ENSEMBLE COMPONENTS</div>
+              <div style="display:flex;flex-direction:column;gap:6px;font-size:0.82rem;color:var(--text2)">
+                <div>⚡ LightGBM — gradient boosting</div>
+                <div>⚡ XGBoost — gradient boosting</div>
+                <div>🧬 LSTM — sequence model (if TF installed)</div>
+                <div>🔗 Logistic meta-learner (stacking)</div>
+              </div>
+            </div>
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px">
+              <div style="font-size:0.78rem;color:var(--text3);font-weight:600;margin-bottom:6px">WALK-FORWARD SPLITS</div>
+              <div style="font-size:0.82rem;color:var(--text2)">12-month train → 3-month val → 3-month test<br>Purge gap: 5 bars (prevents label leakage)</div>
+            </div>
+            <button id="train-btn" class="btn btn-primary" style="width:100%">
+              🧠 Train Model
+            </button>
+          </div>
+        </div>
+
+        <!-- Alerts / tips -->
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="card" style="border-color:rgba(245,158,11,0.3);background:rgba(245,158,11,0.04)">
+            <div style="font-size:0.85rem;color:var(--yellow);font-weight:600;margin-bottom:8px">⚠ Data Requirement</div>
+            <div style="font-size:0.82rem;color:var(--text2);line-height:1.6">
+              Walk-forward training requires <strong style="color:var(--text)">~20,000+ M15 bars (~14 months)</strong>.<br><br>
+              Current yfinance data (~90 days) is too short for full WF — the engine falls back to a 70/15/15 single split.<br><br>
+              <strong style="color:var(--text)">For best results:</strong> Connect MetaTrader 5 and download historical data.
+            </div>
+          </div>
+          <div class="card" style="border-color:rgba(0,212,170,0.2);background:rgba(0,212,170,0.03)">
+            <div style="font-size:0.85rem;color:var(--accent);font-weight:600;margin-bottom:8px">✓ 35-Feature Pipeline</div>
+            <div style="font-size:0.82rem;color:var(--text2);line-height:1.6">
+              Structure (BOS/CHoCH strength) · Liquidity (sweep pierce ATR, EQL/EQH dist) · FVG (active, dist, imbalance) · Order Blocks (strength, dist) · Session (London/NY/Asian) · Volatility (ATR, range z-score) · Microstructure (returns, vol)
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Training log -->
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-title">Training Log</div>
+        <div id="train-log" class="log-box">Waiting for training to start…</div>
+      </div>
+
+      <!-- Fold results -->
+      <div id="train-fold-area" style="display:none">
+        <div class="grid-2" style="align-items:start;margin-bottom:18px">
+          <div class="card">
+            <div class="card-title">Per-Fold AUC (test set)</div>
+            <div class="chart-wrap" style="height:240px">
+              <canvas id="fold-auc-chart"></canvas>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Fold Summary</div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>#</th><th>Train Start</th><th>Train End</th><th>Test End</th><th>AUC</th><th>N Train</th><th>N Test</th></tr>
+                </thead>
+                <tbody id="fold-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /tab-train -->
+
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         TAB 3 — MODELS
+    ══════════════════════════════════════════════════════════════════════ -->
+    <div id="tab-models" class="tab-panel">
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <div>
+          <h2 style="font-size:1.1rem;font-weight:700">Saved Models</h2>
+          <p style="font-size:0.82rem;color:var(--text3);margin-top:3px">Review performance before pushing to live trading</p>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="loadModels()">↺ Refresh</button>
+      </div>
+
+      <div id="models-empty" style="display:none;text-align:center;padding:60px 20px">
+        <div style="font-size:3rem;margin-bottom:14px">🧠</div>
+        <div style="font-size:1rem;color:var(--text2);font-weight:600">No trained models yet</div>
+        <div style="font-size:0.85rem;color:var(--text3);margin-top:6px">Go to the Train tab to create one</div>
+      </div>
+
+      <div id="models-grid" class="model-grid"></div>
+
+    </div><!-- /tab-models -->
+
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         TAB 4 — LIVE
+    ══════════════════════════════════════════════════════════════════════ -->
+    <div id="tab-live" class="tab-panel">
+
+      <!-- Controls -->
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-title">Live Executor Control</div>
+
+        <div class="form-row" style="margin-bottom:14px">
+          <div class="form-group" style="min-width:300px">
+            <label>Active Symbols</label>
+            <div id="live-symbol-chips" class="chip-group"></div>
+          </div>
+          <div class="form-group">
+            <label>Timeframe</label>
+            <select id="live-tf">
+              <option value="M15">M15</option>
+              <option value="M5">M5</option>
+              <option value="H1">H1</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="live-controls">
+          <span id="live-status-text" class="live-status-text">⚫ Executor stopped</span>
+          <button id="live-stop-btn" class="btn btn-danger btn-sm" disabled>⏹ Stop</button>
+        </div>
+
+        <div style="background:rgba(244,63,94,0.07);border:1px solid rgba(244,63,94,0.2);border-radius:10px;padding:14px;margin-top:12px">
+          <div style="font-size:0.82rem;color:var(--red);font-weight:600;margin-bottom:6px">⚠ Live Trading Notice</div>
+          <div style="font-size:0.8rem;color:var(--text2);line-height:1.6">
+            Live trading requires MetaTrader 5 to be installed and running. Push a model from the
+            <strong style="color:var(--text)">Models tab</strong> to start. Without MT5 the executor
+            will log "not connected" and exit safely.
+          </div>
+        </div>
+      </div>
+
+      <!-- Live activity log -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div class="card-title" style="margin-bottom:0">Activity Log</div>
+          <button class="btn btn-secondary btn-sm" onclick="pollLiveStatus()">↺ Refresh</button>
+        </div>
+        <div id="live-log-panel" class="live-log-panel">No activity yet — start the executor from the Models tab</div>
+      </div>
+
+    </div><!-- /tab-live -->
+
+  </main>
+</div><!-- /app -->
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

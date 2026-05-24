@@ -87,7 +87,7 @@ class LiveExecutor:
         # Run detections on the historical window (latest bar already closed).
         detections = self._run_detections(candles)
 
-        # Generate the freshest rule-based signal at the last bar
+        # Generate the freshest rule-based signal at the last bar.
         signals = generate_signals(candles, detections, self.risk_cfg)
         signals = [s for s in signals if s.index == len(candles) - 1]
         if not signals:
@@ -137,6 +137,37 @@ class LiveExecutor:
             }
             self.risk_mgr.register_open(symbol)
             logger.info("Order placed ticket=%d: %s", ticket, result)
+
+    def _run_detections(self, candles: pd.DataFrame) -> dict:
+        """Run all detection algorithms on the current bar set."""
+        det_cfg = self.detection_cfg
+        return {
+            "fvg": detect_fvg(candles, min_gap_atr=det_cfg["fvg_min_gap_atr"]),
+            "order_blocks": detect_order_blocks(
+                candles,
+                min_move_atr=det_cfg["order_block_min_move_atr"],
+                lookback=det_cfg["ob_lookback"],
+            ),
+            "liquidity_sweeps": detect_liquidity_sweeps(
+                candles,
+                lookback=det_cfg["liquidity_lookback"],
+                threshold_atr=det_cfg.get("liquidity_sweep_atr_multiplier", 0.5),
+                swing_lookback=det_cfg["swing_lookback"],
+            ),
+            "equal_levels": detect_equal_highs_lows(
+                candles,
+                tolerance_atr=det_cfg["equal_hl_tolerance_atr"],
+                swing_lookback=det_cfg["swing_lookback"],
+            ),
+            "bos": detect_bos(
+                candles,
+                confirmation_bars=det_cfg["bos_confirmation_bars"],
+                swing_lookback=det_cfg["swing_lookback"],
+            ),
+            "choch": detect_choch(
+                candles, swing_lookback=det_cfg["choch_swing_lookback"]
+            ),
+        }
 
     # ---------- closed-position tracker ----------
     def _check_closed_positions(self) -> None:

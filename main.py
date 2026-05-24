@@ -36,6 +36,7 @@ def main() -> None:
     grp.add_argument("--backtest",      action="store_true", help="Run a vectorized backtest")
     grp.add_argument("--train",         action="store_true", help="Train the ensemble model")
     grp.add_argument("--live",          action="store_true", help="Run the live executor (MT5)")
+    grp.add_argument("--dashboard",     action="store_true", help="Launch the web dashboard (localhost:5000)")
 
     # Capture remaining args verbatim for the dispatched script
     args, forwarded = parser.parse_known_args()
@@ -48,6 +49,10 @@ def main() -> None:
         _run("train_model.py", forwarded)
     elif args.live:
         _run("run_live.py", forwarded)
+    elif args.dashboard:
+        import subprocess, sys
+        dashboard = ROOT / "dashboard" / "app.py"
+        subprocess.run([sys.executable, str(dashboard)], check=True)
 
 
 if __name__ == "__main__":

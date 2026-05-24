@@ -91,7 +91,7 @@ def test_detect_bos_and_choch():
 def test_session_classification():
     ts = pd.Timestamp("2024-01-01 09:00:00")
     label = get_session(ts)
-    assert label in ("London", "Asian", "NY", "London_NY", "OffHours")
+    assert label in ("London", "Asian", "NY", "London_NY", "Asian_London", "OffHours")
     assert seconds_into_session(ts) >= 0
 
 

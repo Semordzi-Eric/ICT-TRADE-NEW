@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from ..detection.fvg import FVGZone
+from ..detection.fvg import FVGZone, calculate_fvg_imbalance
 from ..detection.liquidity import EqualLevel, LiquiditySweep, _atr
 from ..detection.orderblock import OrderBlock
 from ..detection.session import add_session_features
@@ -192,7 +192,9 @@ def build_feature_pipeline(
         better = d_atr < fvg_dist[sl]
         fvg_dist[sl] = np.where(better, d_atr, fvg_dist[sl])
         fvg_gap[sl] = np.where(better, z.gap_atr, fvg_gap[sl])
-        fvg_imb[sl] = np.where(better, z.gap_atr, fvg_imb[sl])
+        # Use the proper imbalance scorer (gap_atr × body_strength)
+        imb_score = calculate_fvg_imbalance(candles, z)
+        fvg_imb[sl] = np.where(better, imb_score, fvg_imb[sl])
     feats["active_bull_fvg"] = bull_fvg_active
     feats["active_bear_fvg"] = bear_fvg_active
     feats["fvg_dist_atr"] = fvg_dist

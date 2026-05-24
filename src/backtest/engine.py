@@ -55,7 +55,7 @@ def run_backtest(
     pip_size: float = 0.0001,
     commission_per_lot: float = 5.0,
     contract_value: float = 100_000.0,
-    max_holding_bars: int = 24,
+    max_holding_bars: int = 36,
     max_concurrent: int = 3,
     trail_activation_r: float = 0.5,
     trail_atr_mult: float = 1.0,
@@ -89,9 +89,13 @@ def run_backtest(
     trades: List[TradeResult] = []
     open_trades: List[dict] = []
 
-    sigs_by_index = sorted(signals, key=lambda s: s.index)
-    sig_iter = iter(sigs_by_index)
-    next_sig = next(sig_iter, None)
+    # Build a per-bar queue so signals are never silently dropped when
+    # max_concurrent is full — they stay eligible for the next bar.
+    from collections import defaultdict
+    sig_queue: dict = defaultdict(list)
+    for s in signals:
+        sig_queue[s.index].append(s)
+    pending: List[Signal] = []  # spill-over from prior bars
 
     for i in range(n):
         # Update open trades — check exits first
@@ -160,41 +164,51 @@ def run_backtest(
                 still_open.append(tr)
         open_trades = still_open
 
-        # Open new trade at the OPEN of the bar AFTER the signal bar.
-        # Signal fires at bar index i-1; we execute at open[i] this iteration.
-        # This avoids same-bar entry optimism (using close[i] as entry).
-        while next_sig is not None and next_sig.index < i:
-            if next_sig.index == i - 1 and len(open_trades) < max_concurrent:
-                # Use this bar's open as the realistic entry price.
-                raw_entry = open_[i]
-                entry_price = (
-                    raw_entry + slippage if next_sig.direction == "long"
-                    else raw_entry - slippage
+        # --- Signal entry logic (P1 fix: use per-bar queue, no silent drops) ---
+        # Collect signals that fired on the previous bar + any spill-over.
+        pending.extend(sig_queue.get(i - 1, []))
+        still_pending = []
+        for sig in pending:
+            if len(open_trades) >= max_concurrent:
+                still_pending.append(sig)   # defer, not dropped
+                continue
+            # Execute at this bar's open (realistic; avoids same-bar lookahead).
+            raw_entry = open_[i]
+            entry_price = (
+                raw_entry + slippage if sig.direction == "long"
+                else raw_entry - slippage
+            )
+            vol = position_size(
+                balance, risk_per_trade,
+                entry_price, sig.stop_loss,
+                contract_value=contract_value,
+            )
+            if vol > 0:
+                commission = commission_per_lot * vol
+                open_trades.append(
+                    {
+                        "entry_index": i,
+                        "entry_price": entry_price,
+                        "stop_loss": sig.stop_loss,
+                        "initial_sl": sig.stop_loss,
+                        "take_profit": sig.take_profit,
+                        "direction": sig.direction,
+                        "volume": vol,
+                        "commission": commission,
+                        "setup_type": sig.setup_type,
+                    }
                 )
-                vol = position_size(
-                    balance, risk_per_trade,
-                    entry_price, next_sig.stop_loss,
-                    contract_value=contract_value,
-                )
-                if vol > 0:
-                    commission = commission_per_lot * vol
-                    open_trades.append(
-                        {
-                            "entry_index": i,
-                            "entry_price": entry_price,
-                            "stop_loss": next_sig.stop_loss,
-                            "initial_sl": next_sig.stop_loss,   # for trailing stop R calc
-                            "take_profit": next_sig.take_profit,
-                            "direction": next_sig.direction,
-                            "volume": vol,
-                            "commission": commission,
-                            "setup_type": next_sig.setup_type,
-                        }
-                    )
-            next_sig = next(sig_iter, None)
+        # Keep deferred signals only until next bar (stale after 1 bar).
+        pending = []
 
-        # Mark-to-market equity update — closed trade balance only (open MTM omitted)
-        equity.iloc[i] = balance
+        # --- Equity: closed balance + unrealized MTM (P2 fix) ---
+        unrealised = 0.0
+        for tr in open_trades:
+            if tr["direction"] == "long":
+                unrealised += (close[i] - tr["entry_price"]) * tr["volume"] * contract_value - tr["commission"]
+            else:
+                unrealised += (tr["entry_price"] - close[i]) * tr["volume"] * contract_value - tr["commission"]
+        equity.iloc[i] = balance + unrealised
 
     # Force-close any still-open trades at the last bar
     last_i = n - 1

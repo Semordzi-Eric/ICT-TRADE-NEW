@@ -5,9 +5,6 @@ strategy:
     - EURUSD
     - GBPUSD
     - USDJPY
-    - AUDUSD
-    - USDCAD
-    - NZDUSD
   default_timeframe: M15
 
   # ----- Per-trade & portfolio risk -----------------------------------------
