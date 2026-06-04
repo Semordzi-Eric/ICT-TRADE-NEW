@@ -76,18 +76,22 @@ class LiveExecutor:
 
     # ---------- internals ----------
     def _tick(self, symbol: str) -> None:
-        candles = self.mt5.fetch_rates(symbol, self.timeframe, self.history_bars)
+        # BUG-1 FIX: fetch from_pos=1 so MT5 skips bar-0 (the active, unclosed
+        # bar). Every candle in the returned frame is now a fully closed bar, so
+        # candles.index[-1] is the *last closed* bar and len(candles)-1 is a
+        # valid, stable index to match signals against.
+        candles = self.mt5.fetch_rates(symbol, self.timeframe, self.history_bars, from_pos=1)
         if candles.empty:
             return
         latest_bar_time = candles.index[-1]
         if self._last_bar_time.get(symbol) == latest_bar_time:
-            return  # no new bar
+            return  # no new closed bar yet
         self._last_bar_time[symbol] = latest_bar_time
 
-        # Run detections on the historical window (latest bar already closed).
+        # Run detections on the historical window (all bars are closed).
         detections = self._run_detections(candles)
 
-        # Generate the freshest rule-based signal at the last bar.
+        # Generate rule-based signals; keep only those confirmed on the last closed bar.
         signals = generate_signals(candles, detections, self.risk_cfg)
         signals = [s for s in signals if s.index == len(candles) - 1]
         if not signals:
@@ -95,10 +99,12 @@ class LiveExecutor:
         sig = signals[0]
         logger.info("Signal: %s %s @ %s", sig.setup_type, sig.direction, sig.entry)
 
-        # Build features and predict
+        # BUG-5b FIX: pass the *full* feature matrix so the LSTM can use its
+        # 20-bar lookback window. predict() handles slicing internally and
+        # returns one probability per row; we take the last one.
         feats = build_feature_pipeline(candles, detections, normalize=True)
         if self.ensemble is not None:
-            prob = float(self.ensemble.predict(feats.iloc[[-1]])[0])
+            prob = float(self.ensemble.predict(feats)[-1])
         else:
             prob = 0.7  # rule-based-only mode
         logger.info("Model probability: %.3f", prob)

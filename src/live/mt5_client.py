@@ -124,10 +124,19 @@ class MT5Client:
         tick = mt5.symbol_info_tick(symbol)
         price = tick.ask if action.lower() == "buy" else tick.bid
         order_type = mt5.ORDER_TYPE_BUY if action.lower() == "buy" else mt5.ORDER_TYPE_SELL
+        vol_step = getattr(symbol_info, "volume_step", 0.01)
+        vol_min = getattr(symbol_info, "volume_min", 0.01)
+        vol_max = getattr(symbol_info, "volume_max", 1000.0)
+        safe_volume = round(float(volume) / vol_step) * vol_step
+        safe_volume = max(vol_min, min(safe_volume, vol_max))
+        # Handle float precision issues
+        decimals = len(str(vol_step).split(".")[1]) if "." in str(vol_step) else 0
+        safe_volume = round(safe_volume, decimals)
+
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
-            "volume": float(volume),
+            "volume": safe_volume,
             "type": order_type,
             "price": price,
             "deviation": deviation,

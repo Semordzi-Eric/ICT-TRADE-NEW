@@ -262,7 +262,9 @@ def api_train():
     body = request.json or {}
     symbol = body.get("symbol", "EURUSD")
     timeframe = body.get("timeframe", "M15")
-    output_dir = body.get("output_dir", str(MODELS_DIR))
+    base_dir = body.get("output_dir", str(MODELS_DIR))
+    run_id = f"{symbol}_{timeframe}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+    output_dir = str(Path(base_dir) / run_id)
 
     det_cfg = _load_yaml("detection_config.yaml")["detection"]
     model_cfg = _load_yaml("model_config.yaml")["model"]

@@ -31,6 +31,11 @@ def detect_bos(
 
     A bullish BOS occurs when close prints above the most recent confirmed swing
     high and stays above for ``confirmation_bars`` bars. Mirror logic for bearish.
+
+    BUG-2 FIX: events are registered at ``i + confirmation_bars`` (the bar at
+    which confirmation is complete and fully observable) rather than at ``i``
+    (which would require peeking at future closes).  This eliminates lookahead
+    bias from ``bars_since_bos`` / ``bos_direction`` features in the ML pipeline.
     """
     if len(candles) < period + swing_lookback + confirmation_bars:
         return []
@@ -46,9 +51,14 @@ def detect_bos(
     last_emitted_idx = -1
 
     for i in range(period, n - confirmation_bars):
-        recent_sh_idx = np.where(is_sh.values[max(0, i - period) : i])[0]
-        recent_sl_idx = np.where(is_sl.values[max(0, i - period) : i])[0]
-        offset = max(0, i - period)
+        confirmed_up_to = max(0, i - swing_lookback)
+        window_start = max(0, i - period)
+        if window_start >= confirmed_up_to:
+            continue
+
+        recent_sh_idx = np.where(is_sh.values[window_start : confirmed_up_to])[0]
+        recent_sl_idx = np.where(is_sl.values[window_start : confirmed_up_to])[0]
+        offset = window_start
 
         if recent_sh_idx.size:
             sh_global = recent_sh_idx + offset
@@ -57,11 +67,13 @@ def detect_bos(
             if close[i] > sh_price and all(
                 close[i + k] > sh_price for k in range(1, confirmation_bars + 1)
             ):
-                if not (last_emitted_dir == "bullish" and i - last_emitted_idx < period):
+                # Register at the bar where confirmation is complete.
+                confirmed_at = i + confirmation_bars
+                if not (last_emitted_dir == "bullish" and confirmed_at - last_emitted_idx < period):
                     events.append(
                         StructureEvent(
-                            index=i,
-                            timestamp=candles.index[i],
+                            index=confirmed_at,
+                            timestamp=candles.index[confirmed_at],
                             kind="BOS",
                             direction="bullish",
                             swing_index=int(sh_idx),
@@ -70,7 +82,7 @@ def detect_bos(
                         )
                     )
                     last_emitted_dir = "bullish"
-                    last_emitted_idx = i
+                    last_emitted_idx = confirmed_at
 
         if recent_sl_idx.size:
             sl_global = recent_sl_idx + offset
@@ -79,11 +91,13 @@ def detect_bos(
             if close[i] < sl_price and all(
                 close[i + k] < sl_price for k in range(1, confirmation_bars + 1)
             ):
-                if not (last_emitted_dir == "bearish" and i - last_emitted_idx < period):
+                # Register at the bar where confirmation is complete.
+                confirmed_at = i + confirmation_bars
+                if not (last_emitted_dir == "bearish" and confirmed_at - last_emitted_idx < period):
                     events.append(
                         StructureEvent(
-                            index=i,
-                            timestamp=candles.index[i],
+                            index=confirmed_at,
+                            timestamp=candles.index[confirmed_at],
                             kind="BOS",
                             direction="bearish",
                             swing_index=int(sl_idx),
@@ -92,7 +106,7 @@ def detect_bos(
                         )
                     )
                     last_emitted_dir = "bearish"
-                    last_emitted_idx = i
+                    last_emitted_idx = confirmed_at
 
     return events
 
@@ -121,24 +135,26 @@ def detect_choch(candles: pd.DataFrame, swing_lookback: int = 5) -> List[Structu
     prev_swing_low: Optional[Tuple[int, float]] = None
 
     for i in range(n):
-        if is_sh.values[i]:
-            prev_swing_high = last_swing_high
-            last_swing_high = (i, float(high[i]))
-            if (
-                prev_swing_high
-                and last_swing_high[1] > prev_swing_high[1]
-                and last_swing_low
-            ):
-                trend = "up"
-        if is_sl.values[i]:
-            prev_swing_low = last_swing_low
-            last_swing_low = (i, float(low[i]))
-            if (
-                prev_swing_low
-                and last_swing_low[1] < prev_swing_low[1]
-                and last_swing_high
-            ):
-                trend = "down"
+        confirm_idx = i - swing_lookback
+        if confirm_idx >= 0:
+            if is_sh.values[confirm_idx]:
+                prev_swing_high = last_swing_high
+                last_swing_high = (confirm_idx, float(high[confirm_idx]))
+                if (
+                    prev_swing_high
+                    and last_swing_high[1] > prev_swing_high[1]
+                    and last_swing_low
+                ):
+                    trend = "up"
+            if is_sl.values[confirm_idx]:
+                prev_swing_low = last_swing_low
+                last_swing_low = (confirm_idx, float(low[confirm_idx]))
+                if (
+                    prev_swing_low
+                    and last_swing_low[1] < prev_swing_low[1]
+                    and last_swing_high
+                ):
+                    trend = "down"
 
         # CHoCH check on close
         if trend == "up" and last_swing_low and close[i] < last_swing_low[1]:

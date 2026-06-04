@@ -156,22 +156,26 @@ def build_feature_pipeline(
     )
     feats["liq_sweep_pierce_atr"] = _last_property(sweeps, n, lambda s: s.pierce_atr, 0.0)
 
-    eqh_levels = [e.level for e in eqs if e.kind == "EQH"]
-    eql_levels = [e.level for e in eqs if e.kind == "EQL"]
-    if eqh_levels:
-        nearest_eqh = np.array(
-            [min(abs(p - lv) for lv in eqh_levels) for p in close]
-        )
-        feats["near_eqh_dist_atr"] = nearest_eqh / atr_safe
-    else:
-        feats["near_eqh_dist_atr"] = 10.0
-    if eql_levels:
-        nearest_eql = np.array(
-            [min(abs(p - lv) for lv in eql_levels) for p in close]
-        )
-        feats["near_eql_dist_atr"] = nearest_eql / atr_safe
-    else:
-        feats["near_eql_dist_atr"] = 10.0
+    def _calc_nearest(eq_list, out_array, swing_lookback=5):
+        if not eq_list:
+            return
+        eq_list = sorted(eq_list, key=lambda x: max(x.indices))
+        active_levels = []
+        eq_idx = 0
+        for i in range(n):
+            while eq_idx < len(eq_list) and max(eq_list[eq_idx].indices) + swing_lookback <= i:
+                active_levels.append(eq_list[eq_idx].level)
+                eq_idx += 1
+            if active_levels:
+                out_array[i] = min(abs(close[i] - lv) for lv in active_levels) / atr_safe[i]
+
+    nearest_eqh = np.full(n, 10.0)
+    nearest_eql = np.full(n, 10.0)
+    _calc_nearest([e for e in eqs if e.kind == "EQH"], nearest_eqh)
+    _calc_nearest([e for e in eqs if e.kind == "EQL"], nearest_eql)
+    
+    feats["near_eqh_dist_atr"] = nearest_eqh
+    feats["near_eql_dist_atr"] = nearest_eql
 
     # --- FVG (5) ---
     bull_fvg_active = np.zeros(n)
@@ -279,18 +283,18 @@ def build_feature_pipeline(
     return feats
 
 
-def _zscore(df: pd.DataFrame) -> pd.DataFrame:
-    """Z-score numeric columns; leave one-hots / 0-1 columns alone."""
+def _zscore(df: pd.DataFrame, window: int = 500) -> pd.DataFrame:
+    """Z-score numeric columns using a rolling window to prevent lookahead bias."""
     out = df.copy()
     for col in out.columns:
         v = out[col].values
         unique = np.unique(v)
         if set(unique).issubset({0.0, 1.0, -1.0}):
             continue
-        mean = np.mean(v)
-        std = np.std(v)
-        if std > 1e-9:
-            out[col] = (v - mean) / std
+        roll = out[col].rolling(window, min_periods=1)
+        mean = roll.mean().values
+        std = roll.std().fillna(1e-9).values
+        out[col] = (v - mean) / np.maximum(std, 1e-9)
     return out
 
 
