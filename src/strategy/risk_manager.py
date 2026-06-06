@@ -39,6 +39,8 @@ class RiskManager:
         self.state = RiskState(peak_balance=account_balance)
         self._current_day: Optional[datetime] = None
         self._current_week: Optional[int] = None
+        # Adaptive-sizing state: True when win rate is in the low zone.
+        self._in_low_wr_regime: bool = False
 
     # ---------- public API ----------
     def can_trade(
@@ -95,6 +97,57 @@ class RiskManager:
             return False, f"volume {proposed_volume} exceeds cap {max_contracts}"
 
         return True, "ok"
+
+    def adaptive_risk_multiplier(
+        self,
+        now: datetime,
+        in_killzone: bool = False,
+    ) -> float:
+        """Return a float multiplier to apply to the base risk_per_trade.
+
+        Logic (all thresholds are configurable via strategy_cfg):
+
+        * When the trailing win rate (last N trades) falls below
+          ``adaptive_sizing_low_wr``, enter the *low-WR regime* and apply
+          ``adaptive_sizing_low_mult`` (e.g. 0.7 = 70% of normal size).
+        * Restore full size once WR recovers above ``adaptive_sizing_high_wr``
+          (hysteresis prevents rapid switching).
+        * If the signal was generated inside a killzone, multiply by
+          ``adaptive_sizing_kz_mult`` (e.g. 1.1 = 10% larger).
+        * Adaptive sizing is a no-op when ``adaptive_sizing`` is False in config.
+
+        Args:
+            now: current UTC datetime (used for regime log timestamps).
+            in_killzone: True when the entry signal is inside London/NY open.
+
+        Returns:
+            A positive float; 1.0 means no change.
+        """
+        if not self.strategy_cfg.get("adaptive_sizing", False):
+            return 1.0
+
+        lookback = int(self.strategy_cfg.get("adaptive_sizing_lookback", 10))
+        low_wr = float(self.strategy_cfg.get("adaptive_sizing_low_wr", 0.35))
+        high_wr = float(self.strategy_cfg.get("adaptive_sizing_high_wr", 0.45))
+        low_mult = float(self.strategy_cfg.get("adaptive_sizing_low_mult", 0.70))
+        kz_mult = float(self.strategy_cfg.get("adaptive_sizing_kz_mult", 1.10))
+
+        # Compute rolling win rate from trade history.
+        history = self.state.trade_history[-lookback:] if self.state.trade_history else []
+        if len(history) >= lookback:
+            win_rate = sum(1 for t in history if t.pnl > 0) / len(history)
+            if self._in_low_wr_regime:
+                # Hysteresis: only exit regime when WR clearly recovers.
+                if win_rate >= high_wr:
+                    self._in_low_wr_regime = False
+            else:
+                if win_rate < low_wr:
+                    self._in_low_wr_regime = True
+
+        mult = low_mult if self._in_low_wr_regime else 1.0
+        if in_killzone:
+            mult *= kz_mult
+        return float(mult)
 
     def register_open(self, symbol: str) -> None:
         self.state.open_symbols.add(symbol)

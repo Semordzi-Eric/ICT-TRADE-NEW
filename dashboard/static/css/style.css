@@ -24,6 +24,24 @@
   --glow:        0 0 20px rgba(0,212,170,0.15);
   --font:        'Inter', system-ui, sans-serif;
   --mono:        'JetBrains Mono', monospace;
+  --header-bg:   rgba(17,22,34,0.95);
+  --log-bg:      #060810;
+  --hover-bg:    rgba(255,255,255,0.04);
+}
+
+[data-theme="light"] {
+  --bg:          #f8fafc;
+  --surface:     #ffffff;
+  --surface2:    #f1f5f9;
+  --border:      #e2e8f0;
+  --border2:     #cbd5e1;
+  --text:        #0f172a;
+  --text2:       #475569;
+  --text3:       #64748b;
+  --header-bg:   rgba(255,255,255,0.95);
+  --log-bg:      #f1f5f9;
+  --hover-bg:    rgba(0,0,0,0.04);
+  --shadow:      0 4px 24px rgba(0,0,0,0.06);
 }
 
 html { font-size: 15px; scroll-behavior: smooth; }
@@ -41,7 +59,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); min-
 .header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 28px; height: 60px;
-  background: rgba(17,22,34,0.95);
+  background: var(--header-bg);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(12px);
   position: sticky; top: 0; z-index: 100;
@@ -84,7 +102,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); min-
   border-bottom: 2px solid transparent; transition: all 0.2s;
   position: relative; top: 1px;
 }
-.tab-btn:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.tab-btn:hover { color: var(--text); background: var(--hover-bg); }
 .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); background: rgba(0,212,170,0.06); }
 .tab-icon { font-size: 1rem; }
 
@@ -177,7 +195,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); min-
 
 /* ── Log Stream ──────────────────────────────────────────────────────────── */
 .log-box {
-  background: #060810; border: 1px solid var(--border);
+  background: var(--log-bg); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 14px 16px;
   font-family: var(--mono); font-size: 0.78rem; line-height: 1.7;
   max-height: 260px; overflow-y: auto; color: var(--text2);
@@ -202,7 +220,7 @@ th {
   white-space: nowrap; border-bottom: 1px solid var(--border);
 }
 td { padding: 9px 14px; border-bottom: 1px solid rgba(30,41,64,0.5); color: var(--text2); }
-tbody tr:hover td { background: rgba(255,255,255,0.02); }
+tbody tr:hover td { background: var(--hover-bg); }
 tbody tr:last-child td { border-bottom: none; }
 .td-win { color: var(--green); font-weight: 600; }
 .td-loss { color: var(--red); font-weight: 600; }
@@ -249,9 +267,9 @@ tbody tr:last-child td { border-bottom: none; }
 .live-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 20px; }
 .live-status-text { font-size: 0.85rem; color: var(--text2); }
 .live-log-panel {
-  background: #060810; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--log-bg); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 14px 16px; font-family: var(--mono); font-size: 0.77rem;
-  line-height: 1.8; max-height: 320px; overflow-y: auto; color: #5a6e8a;
+  line-height: 1.8; max-height: 320px; overflow-y: auto; color: var(--text2);
 }
 
 /* ── Data status dots ────────────────────────────────────────────────────── */

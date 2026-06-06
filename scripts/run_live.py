@@ -95,6 +95,7 @@ def main() -> None:
         mt5_client=client,
         detection_cfg=det_cfg,
         risk_cfg=risk_cfg,
+        strategy_cfg=strat_cfg,
         prob_threshold=strat_cfg.get("min_model_probability", 0.65),
     )
     try:

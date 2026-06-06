@@ -22,6 +22,10 @@ pyyaml>=6.0
 joblib>=1.2
 python-dateutil>=2.8
 
+# Web dashboard
+flask>=3.0
+flask-cors>=4.0
+
 # Plotting / analysis
 matplotlib>=3.6
 seaborn>=0.12

@@ -197,20 +197,53 @@ class MT5Client:
         info = mt5.account_info()
         return info._asdict() if info else None
 
-    def get_deal_profit(self, order_ticket: int) -> Optional[float]:
-        """Return the net profit of a closed deal matched by its order ticket.
+    def get_deal_profit(self, order_ticket: int, lookback_days: int = 7) -> Optional[float]:
+        """Return the net profit of all deal rows matched by *order_ticket*.
 
-        Scans the last 24 hours of deal history. Returns None if not found.
+        MT5 can produce multiple deal entries for a single order (partial fills,
+        swap/commission rows, etc.).  We sum every deal whose ``order`` field
+        matches to avoid under-counting PnL.  ``lookback_days`` defaults to 7
+        so trades held over a weekend or on H1 are always captured — the
+        previous hard-coded 24-hour window caused the risk manager to record
+        phantom breakevens for longer-held positions.
         """
         if not HAS_MT5 or not self.connected:
             return None
         from datetime import datetime, timedelta
-        date_from = datetime.utcnow() - timedelta(days=1)
+        date_from = datetime.utcnow() - timedelta(days=max(1, lookback_days))
         date_to = datetime.utcnow()
         deals = mt5.history_deals_get(date_from, date_to)
         if deals is None:
             return None
-        for deal in deals:
-            if int(deal.order) == order_ticket:
-                return float(deal.profit)
-        return None
+        total = sum(
+            float(d.profit)
+            for d in deals
+            if int(d.order) == order_ticket
+        )
+        # Return None (not 0) when the ticket was genuinely not found so the
+        # caller can distinguish "deal not yet settled" from "zero-profit deal".
+        matched = any(int(d.order) == order_ticket for d in deals)
+        return total if matched else None
+
+    def get_spread_pips(
+        self,
+        symbol: str,
+        pip_size: float = 0.0001,
+    ) -> float:
+        """Return the current bid/ask spread in pips for *symbol*.
+
+        Returns a large sentinel (999.0) when MT5 is unavailable so callers
+        can safely compare against a max-spread threshold and reject the trade.
+
+        Args:
+            symbol: instrument name, e.g. ``'EURUSD'``.
+            pip_size: pip size in price units (0.0001 for 4-decimal FX,
+                0.01 for JPY pairs, 1.0 for indices).
+        """
+        if not HAS_MT5 or not self.connected:
+            return 999.0
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            return 999.0
+        spread_price = abs(tick.ask - tick.bid)
+        return float(spread_price / pip_size) if pip_size > 0 else 999.0

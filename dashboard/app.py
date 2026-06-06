@@ -35,6 +35,7 @@ from src.detection.structure import detect_bos, detect_choch
 from src.strategy.rule_based import generate_signals
 from src.utils.data_loader import load_data
 from src.utils.logging_utils import setup_logging
+from src.live.mt5_client import MT5Client
 
 import yaml
 
@@ -44,6 +45,21 @@ CORS(app)
 CONFIG_DIR = ROOT / "config"
 DATA_DIR = ROOT / "data"
 MODELS_DIR = ROOT / "models_artifacts"
+
+# ── Shared MT5 client (connects once, reused by all routes) ──────────────────
+# Calling mt5.initialize() with no arguments attaches to the currently open
+# MetaTrader 5 terminal on the desktop — no credentials needed.
+_mt5: MT5Client = MT5Client()
+_mt5_lock = threading.Lock()
+
+
+def _get_mt5() -> MT5Client:
+    """Return the shared MT5 client, connecting if necessary."""
+    with _mt5_lock:
+        if not _mt5.connected:
+            _mt5.connect()   # no-op if MT5 is not installed or terminal is closed
+    return _mt5
+
 
 # ── live executor state ──────────────────────────────────────────────────────
 _live_thread: Optional[threading.Thread] = None
@@ -151,6 +167,129 @@ def api_symbols():
     return jsonify({"symbols": strat.get("symbols", ["EURUSD", "GBPUSD", "USDJPY"])})
 
 
+# ── MT5 status & connect ─────────────────────────────────────────────────────
+
+@app.route("/api/mt5/status")
+def api_mt5_status():
+    """Return MT5 connection state and account details."""
+    mt5 = _get_mt5()
+    if not mt5.connected:
+        return jsonify({"connected": False, "account": None})
+    info = mt5.account_info() or {}
+    # Expose only the fields the UI needs — never expose passwords.
+    account = {
+        "login":   info.get("login", "—"),
+        "name":    info.get("name", "—"),
+        "server":  info.get("server", "—"),
+        "balance": info.get("balance", 0.0),
+        "equity":  info.get("equity", 0.0),
+        "currency": info.get("currency", "USD"),
+        "leverage": info.get("leverage", 0),
+        "company": info.get("company", "—"),
+    }
+    return jsonify({"connected": True, "account": account})
+
+
+@app.route("/api/mt5/connect", methods=["POST"])
+def api_mt5_connect():
+    """Attempt to connect (or re-connect) to the running MT5 terminal.
+
+    Body (all optional — if omitted, attaches to the already-logged-in account):
+        { "account": 12345, "password": "xxx", "server": "Broker-Live" }
+    """
+    body = request.json or {}
+    account  = body.get("account")  or None
+    password = body.get("password") or None
+    server   = body.get("server")   or None
+    with _mt5_lock:
+        # Always re-initialize so a fresh connection is made.
+        if _mt5.connected:
+            _mt5.disconnect()
+        ok = _mt5.connect(
+            account=int(account) if account else None,
+            password=password,
+            server=server,
+        )
+    if ok:
+        info = _mt5.account_info() or {}
+        return jsonify({
+            "connected": True,
+            "account": {
+                "login":    info.get("login", "—"),
+                "name":     info.get("name", "—"),
+                "server":   info.get("server", "—"),
+                "balance":  info.get("balance", 0.0),
+                "equity":   info.get("equity", 0.0),
+                "currency": info.get("currency", "USD"),
+                "leverage": info.get("leverage", 0),
+                "company":  info.get("company", "—"),
+            },
+        })
+    return jsonify({"connected": False, "error": "MT5 not running or terminal is closed"}), 400
+
+
+# ── Data download ─────────────────────────────────────────────────────────────
+
+@app.route("/api/data/download", methods=["POST"])
+def api_data_download():
+    """Download historical data from MT5 (preferred) or yfinance.
+
+    Body:
+        { "symbols": ["EURUSD", ...], "timeframe": "M15", "bars": 200000 }
+
+    Streams SSE events so the frontend can show per-symbol progress.
+    """
+    body = request.json or {}
+    strat = _load_yaml("strategy_config.yaml")["strategy"]
+    symbols   = body.get("symbols",   strat.get("symbols", ["EURUSD", "GBPUSD", "USDJPY"]))
+    timeframe = body.get("timeframe", strat.get("default_timeframe", "M15"))
+    bars      = int(body.get("bars", 200_000))
+
+    def _run_download():
+        import logging as _log
+        results = {}
+        mt5 = _get_mt5()
+        for symbol in symbols:
+            _log.getLogger().info("Downloading %s %s (up to %d bars)…", symbol, timeframe, bars)
+            try:
+                if mt5.connected:
+                    # Pull directly from the already-connected MT5 terminal —
+                    # maximum history, no 60-day limit.
+                    df = mt5.fetch_rates(symbol, timeframe, bars, from_pos=1)
+                    source = "MT5"
+                else:
+                    # Fallback to yfinance
+                    from src.utils.data_loader import load_from_yfinance
+                    tf_map = {"M1":"1m","M5":"5m","M15":"15m","M30":"30m","H1":"1h","D1":"1d"}
+                    interval = tf_map.get(timeframe.upper(), "15m")
+                    period = "730d" if interval in ("1h", "1d") else "60d"
+                    df = load_from_yfinance(symbol, period=period, interval=interval)
+                    source = "yfinance"
+
+                if df is None or df.empty:
+                    _log.getLogger().warning("%s: no data returned", symbol)
+                    results[symbol] = {"bars": 0, "source": source, "error": "no data"}
+                    continue
+
+                # Write to CSV cache
+                cache = DATA_DIR / f"{symbol}_{timeframe}.csv"
+                DATA_DIR.mkdir(parents=True, exist_ok=True)
+                df.to_csv(cache, index_label="time")
+                n = len(df)
+                _log.getLogger().info("%s: saved %d bars from %s → %s", symbol, n, source, cache.name)
+                results[symbol] = {"bars": n, "source": source}
+            except Exception as e:
+                _log.getLogger().error("%s download failed: %s", symbol, e)
+                results[symbol] = {"bars": 0, "source": "error", "error": str(e)}
+        return results
+
+    def generate():
+        yield from _stream_job(_run_download)
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.route("/api/data/status")
 def api_data_status():
     rows = []
@@ -204,7 +343,8 @@ def api_backtest():
                 len(detections["choch"]),
             )
 
-            signals = generate_signals(candles, detections, risk_cfg)
+            combined_cfg = {**risk_cfg, **strat_cfg}
+            signals = generate_signals(candles, detections, combined_cfg)
             _log.getLogger().info("%s: %d signals generated", symbol, len(signals))
 
             if not signals:
@@ -284,8 +424,10 @@ def api_train():
             raise ValueError(f"No data for {symbol} {timeframe}")
         _log.getLogger().info("Loaded %d bars", len(candles))
 
+        strat_cfg = _load_yaml("strategy_config.yaml")["strategy"]
         detections = _detect(candles, det_cfg)
-        signals = generate_signals(candles, detections, risk_cfg)
+        combined_cfg = {**risk_cfg, **strat_cfg}
+        signals = generate_signals(candles, detections, combined_cfg)
         setups = signals_to_setups(signals)
         _log.getLogger().info("Generated %d setups", len(setups))
 
@@ -396,17 +538,24 @@ def api_live_start():
                 except Exception as e:
                     _live_log.append(f"Model load failed: {e}")
 
-            mt5 = MT5Client()
-            if not mt5.connect():
-                _live_log.append("MT5 not connected — live mode requires MetaTrader5")
+            # Reuse the shared MT5 client (already connected from Setup tab).
+            # If not yet connected, attempt to connect to the open terminal.
+            mt5_client = _get_mt5()
+            if not mt5_client.connected:
+                _live_log.append("MT5 not connected — open MetaTrader 5 on your desktop and click Connect in the Setup tab")
                 return
 
-            rm = RiskManager(strat_cfg, risk_cfg,
-                             float(strat_cfg.get("account_starting_balance", 10_000)))
+            # Read actual account balance from MT5.
+            acct = mt5_client.account_info() or {}
+            balance = float(acct.get("balance", strat_cfg.get("account_starting_balance", 10_000)))
+            _live_log.append(f"Connected: #{acct.get('login','?')} @ {acct.get('server','?')} — Balance: {acct.get('currency','USD')} {balance:,.2f}")
+
+            rm = RiskManager(strat_cfg, risk_cfg, balance)
             executor = LiveExecutor(
                 symbols=symbols, timeframe=timeframe,
                 ensemble=ensemble, risk_manager=rm,
-                mt5_client=mt5, detection_cfg=det_cfg, risk_cfg=risk_cfg,
+                mt5_client=mt5_client, detection_cfg=det_cfg,
+                risk_cfg=risk_cfg, strategy_cfg=strat_cfg,
             )
             while not _live_stop_event.is_set():
                 executor._check_closed_positions()
@@ -416,7 +565,7 @@ def api_live_start():
                     except Exception as exc:
                         _live_log.append(f"Tick error {sym}: {exc}")
                 _live_stop_event.wait(timeout=5)
-            mt5.disconnect()
+            # Do NOT disconnect shared client here — other routes still use it.
         except Exception as exc:
             _live_log.append(f"Live executor error: {exc}")
         finally:

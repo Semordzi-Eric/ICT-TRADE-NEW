@@ -22,15 +22,21 @@
       </svg>
       <h1>ICT<span>Bot</span> <span style="color:var(--text3);font-weight:400">Dashboard</span></h1>
     </div>
-    <div id="live-badge" class="live-badge">
-      <div class="dot"></div>
-      <span class="dot-text">OFFLINE</span>
+    <div style="display:flex; align-items:center; gap: 15px;">
+      <button id="theme-toggle" class="btn btn-secondary btn-sm" style="border-radius:50%; padding:4px 6px; font-size:1.1rem; border:none; background:transparent;">☀️</button>
+      <div id="live-badge" class="live-badge">
+        <div class="dot"></div>
+        <span class="dot-text">OFFLINE</span>
+      </div>
     </div>
   </header>
 
   <!-- ── Tab Bar ─────────────────────────────────────────────────────────── -->
   <nav class="tabs">
-    <button class="tab-btn active" data-tab="tab-backtest">
+    <button class="tab-btn active" data-tab="tab-setup">
+      <span class="tab-icon">⚙️</span> Setup
+    </button>
+    <button class="tab-btn" data-tab="tab-backtest">
       <span class="tab-icon">📊</span> Backtest
     </button>
     <button class="tab-btn" data-tab="tab-train">
@@ -48,9 +54,61 @@
   <main class="main">
 
     <!-- ══════════════════════════════════════════════════════════════════
+         TAB 0 — SETUP
+    ══════════════════════════════════════════════════════════════════════ -->
+    <div id="tab-setup" class="tab-panel active">
+      
+      <!-- MT5 Connection -->
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-title">MetaTrader 5 Connection</div>
+        <p style="font-size:0.85rem; color:var(--text2); margin-bottom: 15px;">
+          Connect to your running MetaTrader 5 desktop application. The bot will use the active account for live trading and historical data downloads.
+        </p>
+        <div id="setup-mt5-status" style="padding: 15px; border-radius: 8px; background: rgba(30,41,64,0.5); margin-bottom: 15px;">
+          <span style="color:var(--text3)">Checking connection...</span>
+        </div>
+        <button id="setup-mt5-connect-btn" class="btn btn-primary">🔗 Connect to MT5</button>
+      </div>
+
+      <!-- Data Download -->
+      <div class="card">
+        <div class="card-title">Download Historical Data</div>
+        <p style="font-size:0.85rem; color:var(--text2); margin-bottom: 15px;">
+          Download OHLCV price data for backtesting and model training. Uses MT5 if connected (unlimited history), otherwise falls back to Yahoo Finance (limited to 60 days for intraday).
+        </p>
+        <div class="form-row">
+          <div class="form-group" style="min-width:300px">
+            <label>Symbols to Download</label>
+            <div id="setup-dl-symbol-chips" class="chip-group"></div>
+          </div>
+          <div class="form-group">
+            <label>Timeframe</label>
+            <select id="setup-dl-tf">
+              <option value="M15" selected>M15</option>
+              <option value="M5">M5</option>
+              <option value="M30">M30</option>
+              <option value="H1">H1</option>
+              <option value="H4">H4</option>
+              <option value="D1">D1</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Bars per Symbol</label>
+            <input type="number" id="setup-dl-bars" value="200000" min="1000" step="10000" />
+          </div>
+          <div class="form-group" style="justify-content:flex-end">
+            <button id="setup-dl-btn" class="btn btn-secondary">⬇️ Download Data</button>
+          </div>
+        </div>
+        <div id="setup-dl-log" class="log-box" style="margin-top: 15px; display: none;"></div>
+      </div>
+
+    </div><!-- /tab-setup -->
+
+    <!-- ══════════════════════════════════════════════════════════════════
          TAB 1 — BACKTEST
     ══════════════════════════════════════════════════════════════════════ -->
-    <div id="tab-backtest" class="tab-panel active">
+    <div id="tab-backtest" class="tab-panel">
 
       <!-- Controls row -->
       <div class="card" style="margin-bottom:18px">

@@ -104,46 +104,40 @@ def run_backtest(
             exited = False
             cur_atr = atr_vals[i] if np.isfinite(atr_vals[i]) and atr_vals[i] > 0 else 0.0
 
-            # --- Update trailing stop ---
-            if cur_atr > 0:
-                if tr["direction"] == "long":
-                    unrealised_r = (close[i] - tr["entry_price"]) / abs(tr["entry_price"] - tr["initial_sl"])
-                    if unrealised_r >= trail_activation_r:
-                        new_trail_sl = close[i] - trail_atr_mult * cur_atr
-                        tr["stop_loss"] = max(tr["stop_loss"], new_trail_sl)
-                else:  # short
-                    unrealised_r = (tr["entry_price"] - close[i]) / abs(tr["entry_price"] - tr["initial_sl"])
-                    if unrealised_r >= trail_activation_r:
-                        new_trail_sl = close[i] + trail_atr_mult * cur_atr
-                        tr["stop_loss"] = min(tr["stop_loss"], new_trail_sl)
+            # --- Snapshot SL *before* the trail update so that exits this bar
+            # are evaluated against the level that was set at bar open, not the
+            # level the trail may have just tightened to.  This prevents the
+            # optimistic scenario where the trail fires first and causes a
+            # premature stop on the tighter level within the same bar. ---
+            sl_at_bar_open = tr["stop_loss"]
 
             if tr["direction"] == "long":
-                if low[i] <= tr["stop_loss"]:
-                    exit_price = tr["stop_loss"] - slippage
+                if low[i] <= sl_at_bar_open:
+                    exit_price = sl_at_bar_open - slippage
                     pnl = (exit_price - tr["entry_price"]) * tr["volume"] * contract_value - tr["commission"]
-                    r = (exit_price - tr["entry_price"]) / abs(tr["entry_price"] - tr["stop_loss"])
+                    r = (exit_price - tr["entry_price"]) / abs(tr["entry_price"] - tr["initial_sl"])
                     trades.append(_finalise(tr, i, exit_price, pnl, r, "sl", candles))
                     balance += pnl
                     exited = True
                 elif high[i] >= tr["take_profit"]:
                     exit_price = tr["take_profit"] - slippage
                     pnl = (exit_price - tr["entry_price"]) * tr["volume"] * contract_value - tr["commission"]
-                    r = (exit_price - tr["entry_price"]) / abs(tr["entry_price"] - tr["stop_loss"])
+                    r = (exit_price - tr["entry_price"]) / abs(tr["entry_price"] - tr["initial_sl"])
                     trades.append(_finalise(tr, i, exit_price, pnl, r, "tp", candles))
                     balance += pnl
                     exited = True
             else:  # short
-                if high[i] >= tr["stop_loss"]:
-                    exit_price = tr["stop_loss"] + slippage
+                if high[i] >= sl_at_bar_open:
+                    exit_price = sl_at_bar_open + slippage
                     pnl = (tr["entry_price"] - exit_price) * tr["volume"] * contract_value - tr["commission"]
-                    r = (tr["entry_price"] - exit_price) / abs(tr["entry_price"] - tr["stop_loss"])
+                    r = (tr["entry_price"] - exit_price) / abs(tr["entry_price"] - tr["initial_sl"])
                     trades.append(_finalise(tr, i, exit_price, pnl, r, "sl", candles))
                     balance += pnl
                     exited = True
                 elif low[i] <= tr["take_profit"]:
                     exit_price = tr["take_profit"] + slippage
                     pnl = (tr["entry_price"] - exit_price) * tr["volume"] * contract_value - tr["commission"]
-                    r = (tr["entry_price"] - exit_price) / abs(tr["entry_price"] - tr["stop_loss"])
+                    r = (tr["entry_price"] - exit_price) / abs(tr["entry_price"] - tr["initial_sl"])
                     trades.append(_finalise(tr, i, exit_price, pnl, r, "tp", candles))
                     balance += pnl
                     exited = True
@@ -152,17 +146,30 @@ def run_backtest(
                 exit_price = close[i] - slippage if tr["direction"] == "long" else close[i] + slippage
                 if tr["direction"] == "long":
                     pnl = (exit_price - tr["entry_price"]) * tr["volume"] * contract_value - tr["commission"]
-                    r = (exit_price - tr["entry_price"]) / abs(tr["entry_price"] - tr["stop_loss"])
+                    r = (exit_price - tr["entry_price"]) / abs(tr["entry_price"] - tr["initial_sl"])
                 else:
                     pnl = (tr["entry_price"] - exit_price) * tr["volume"] * contract_value - tr["commission"]
-                    r = (tr["entry_price"] - exit_price) / abs(tr["entry_price"] - tr["stop_loss"])
+                    r = (tr["entry_price"] - exit_price) / abs(tr["entry_price"] - tr["initial_sl"])
                 trades.append(_finalise(tr, i, exit_price, pnl, r, "time", candles))
                 balance += pnl
                 exited = True
 
             if not exited:
+                # --- Update trailing stop *after* exit check (next-bar effect) ---
+                if cur_atr > 0:
+                    if tr["direction"] == "long":
+                        unrealised_r = (close[i] - tr["entry_price"]) / abs(tr["entry_price"] - tr["initial_sl"])
+                        if unrealised_r >= trail_activation_r:
+                            new_trail_sl = close[i] - trail_atr_mult * cur_atr
+                            tr["stop_loss"] = max(tr["stop_loss"], new_trail_sl)
+                    else:
+                        unrealised_r = (tr["entry_price"] - close[i]) / abs(tr["entry_price"] - tr["initial_sl"])
+                        if unrealised_r >= trail_activation_r:
+                            new_trail_sl = close[i] + trail_atr_mult * cur_atr
+                            tr["stop_loss"] = min(tr["stop_loss"], new_trail_sl)
                 still_open.append(tr)
         open_trades = still_open
+
 
         # --- Signal entry logic (P1 fix: use per-bar queue, no silent drops) ---
         # Collect signals that fired on the previous bar + any spill-over.

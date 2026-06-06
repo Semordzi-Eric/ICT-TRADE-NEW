@@ -34,6 +34,8 @@ function initSymbolChips() {
   fetch('/api/symbols')
     .then(r => r.json())
     .then(({ symbols }) => {
+      // Setup DL chips
+      renderChips('setup-dl-symbol-chips', symbols, state.selectedSymbols, (sel) => {});
       // Backtest chips
       renderChips('bt-symbol-chips', symbols, state.selectedSymbols, (sel) => {
         state.selectedSymbols = sel;
@@ -63,6 +65,156 @@ function renderChips(containerId, symbols, selected, onChange) {
     });
     container.appendChild(chip);
   });
+}
+
+// ── Setup (MT5 & Data Download) ────────────────────────────────────────────
+function initSetup() {
+  $('#setup-mt5-connect-btn').addEventListener('click', connectMT5);
+  $('#setup-dl-btn').addEventListener('click', downloadData);
+  checkMT5Status();
+}
+
+function checkMT5Status() {
+  fetch('/api/mt5/status')
+    .then(r => r.json())
+    .then(data => renderMT5Status(data))
+    .catch(e => renderMT5Status({ connected: false, error: e.toString() }));
+}
+
+function connectMT5() {
+  const btn = $('#setup-mt5-connect-btn');
+  btn.disabled = true;
+  btn.textContent = 'Connecting...';
+  
+  fetch('/api/mt5/connect', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      renderMT5Status(data);
+      btn.disabled = false;
+      btn.textContent = '🔗 Connect to MT5';
+    })
+    .catch(e => {
+      renderMT5Status({ connected: false, error: e.toString() });
+      btn.disabled = false;
+      btn.textContent = '🔗 Connect to MT5';
+    });
+}
+
+function renderMT5Status(data) {
+  const statusEl = $('#setup-mt5-status');
+  if (!statusEl) return;
+  
+  if (data.connected) {
+    const acct = data.account || {};
+    statusEl.innerHTML = `
+      <div style="display: flex; align-items: center; margin-bottom: 10px;">
+        <span class="status-dot status-ok" style="margin-right: 8px;"></span>
+        <strong style="color: #e2e8f0; font-size: 1.1rem;">Connected to MT5</strong>
+      </div>
+      <div class="grid-3" style="gap: 10px; font-size: 0.85rem; color: var(--text2);">
+        <div><strong>Account:</strong> ${acct.login}</div>
+        <div><strong>Name:</strong> ${acct.name}</div>
+        <div><strong>Server:</strong> ${acct.server}</div>
+        <div><strong>Balance:</strong> ${acct.currency} ${Number(acct.balance).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+        <div><strong>Equity:</strong> ${acct.currency} ${Number(acct.equity).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+        <div><strong>Leverage:</strong> 1:${acct.leverage}</div>
+      </div>
+    `;
+  } else {
+    statusEl.innerHTML = `
+      <div style="display: flex; align-items: center;">
+        <span class="status-dot status-bad" style="margin-right: 8px;"></span>
+        <strong style="color: var(--red);">Disconnected</strong>
+      </div>
+      <div style="font-size: 0.85rem; color: var(--text3); margin-top: 5px;">
+        ${data.error || 'MetaTrader 5 terminal is not open or not connected.'}
+      </div>
+    `;
+  }
+}
+
+function downloadData() {
+  const symbols = $$('#setup-dl-symbol-chips .chip.selected').map(c => c.textContent);
+  if (!symbols.length) { alert('Select at least one symbol'); return; }
+
+  const timeframe = $('#setup-dl-tf').value;
+  const bars = parseInt($('#setup-dl-bars').value) || 200000;
+  
+  const btn = $('#setup-dl-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin">⟳</span> Downloading...';
+  
+  const logBox = $('#setup-dl-log');
+  logBox.style.display = 'block';
+  logBox.innerHTML = '';
+  
+  fetch('/api/data/download', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbols, timeframe, bars })
+  }).then(res => {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    function read() {
+      reader.read().then(({ done, value }) => {
+        if (done) {
+          btn.disabled = false;
+          btn.innerHTML = '⬇️ Download Data';
+          loadDataStatus(); // refresh backtest tab data status
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        lines.forEach(line => {
+          if (!line.startsWith('data: ')) return;
+          try {
+            const ev = JSON.parse(line.slice(6));
+            handleDownloadEvent(ev, logBox);
+          } catch {}
+        });
+        read();
+      });
+    }
+    read();
+  }).catch(e => {
+    logBox.innerHTML += `<div class="log-error">Error: ${e}</div>`;
+    btn.disabled = false;
+    btn.innerHTML = '⬇️ Download Data';
+  });
+}
+
+function handleDownloadEvent(ev, logBox) {
+  if (ev.type === 'log') {
+    const level = ev.msg.startsWith('WARNING') ? 'warn' : ev.msg.startsWith('ERROR') ? 'error' : 'info';
+    const div = document.createElement('div');
+    div.className = `log-${level}`;
+    div.textContent = ev.msg;
+    logBox.appendChild(div);
+    logBox.scrollTop = logBox.scrollHeight;
+  } else if (ev.type === 'result') {
+    const res = ev.data;
+    const symbols = Object.keys(res);
+    symbols.forEach(sym => {
+       const info = res[sym];
+       const div = document.createElement('div');
+       if (info.error) {
+         div.className = 'log-error';
+         div.textContent = `${sym}: Error - ${info.error}`;
+       } else {
+         div.className = 'log-info';
+         div.textContent = `${sym}: Saved ${info.bars.toLocaleString()} bars from ${info.source}`;
+       }
+       logBox.appendChild(div);
+    });
+    logBox.scrollTop = logBox.scrollHeight;
+  } else if (ev.type === 'error') {
+    logBox.innerHTML += `<div class="log-error">❌ ${ev.msg}</div>`;
+  } else if (ev.type === 'done') {
+    logBox.innerHTML += `<div class="log-done">✓ Download Complete</div>`;
+  }
 }
 
 // ── Data status ────────────────────────────────────────────────────────────
@@ -337,11 +489,7 @@ function renderEquityCurve(symbol, equityData) {
       plugins: {
         legend: { labels: { color: '#94a3b8', font: { family: 'Inter' } } },
         tooltip: {
-          backgroundColor: '#111622',
-          borderColor: '#1e2940',
           borderWidth: 1,
-          titleColor: '#e2e8f0',
-          bodyColor: '#94a3b8',
           callbacks: {
             label: ctx => ctx.datasetIndex === 0
               ? `Equity: $${ctx.parsed.y.toFixed(2)}`
@@ -350,8 +498,8 @@ function renderEquityCurve(symbol, equityData) {
         },
       },
       scales: {
-        x: { ticks: { color: '#64748b', maxTicksLimit: 8, font: { size: 11 } }, grid: { color: 'rgba(30,41,64,0.5)' } },
-        y: { ticks: { color: '#64748b', font: { size: 11 }, callback: v => '$' + v.toLocaleString() }, grid: { color: 'rgba(30,41,64,0.5)' }, position: 'left' },
+        x: { ticks: { color: '#64748b', maxTicksLimit: 8, font: { size: 11 } } },
+        y: { ticks: { color: '#64748b', font: { size: 11 }, callback: v => '$' + v.toLocaleString() }, position: 'left' },
         y2: { ticks: { color: 'rgba(244,63,94,0.6)', font: { size: 10 }, callback: v => v.toFixed(1) + '%' }, grid: { display: false }, position: 'right', max: 0 },
       },
     },
@@ -455,8 +603,8 @@ function renderFoldResults(folds) {
         tooltip: { callbacks: { label: ctx => `AUC: ${ctx.parsed.y.toFixed(4)}` } },
       },
       scales: {
-        x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(30,41,64,0.5)' } },
-        y: { min: 0.4, max: 1, ticks: { color: '#64748b' }, grid: { color: 'rgba(30,41,64,0.5)' } },
+        x: { ticks: { color: '#64748b' } },
+        y: { min: 0.4, max: 1, ticks: { color: '#64748b' } },
       },
     },
   });
@@ -619,17 +767,49 @@ function pollLiveStatus() {
     });
 }
 
+// ── Theme (Light/Dark Mode) ────────────────────────────────────────────────
+function initTheme() {
+  const toggle = $('#theme-toggle');
+  if (!toggle) return;
+
+  const currentTheme = localStorage.getItem('theme') || 'dark';
+  document.documentElement.dataset.theme = currentTheme;
+  toggle.textContent = currentTheme === 'light' ? '🌙' : '☀️';
+
+  toggle.addEventListener('click', () => {
+    const isLight = document.documentElement.dataset.theme === 'light';
+    const newTheme = isLight ? 'dark' : 'light';
+    document.documentElement.dataset.theme = newTheme;
+    localStorage.setItem('theme', newTheme);
+    toggle.textContent = newTheme === 'light' ? '🌙' : '☀️';
+    
+    // Update chart colors
+    setChartDefaults();
+    Object.values(state.equityCharts).forEach(c => c.update());
+    if (state.foldChart) state.foldChart.update();
+  });
+}
+
 // ── Chart.js global defaults ───────────────────────────────────────────────
 function setChartDefaults() {
+  const isLight = document.documentElement.dataset.theme === 'light';
   Chart.defaults.font.family = 'Inter';
   Chart.defaults.color = '#64748b';
-  Chart.defaults.borderColor = 'rgba(30,41,64,0.5)';
+  Chart.defaults.borderColor = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(30,41,64,0.5)';
+  
+  if (!Chart.defaults.plugins.tooltip) Chart.defaults.plugins.tooltip = {};
+  Chart.defaults.plugins.tooltip.backgroundColor = isLight ? '#ffffff' : '#111622';
+  Chart.defaults.plugins.tooltip.borderColor = isLight ? '#e2e8f0' : '#1e2940';
+  Chart.defaults.plugins.tooltip.titleColor = isLight ? '#0f172a' : '#e2e8f0';
+  Chart.defaults.plugins.tooltip.bodyColor = isLight ? '#475569' : '#94a3b8';
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  initTheme();
   setChartDefaults();
   initSymbolChips();
+  initSetup();
   loadDataStatus();
   initBacktest();
   initTrain();

@@ -87,7 +87,10 @@ def backtest_one(
             candles, swing_lookback=det_cfg["choch_swing_lookback"]
         ),
     }
-    signals = generate_signals(candles, detections, risk_cfg)
+    # Merge strategy config into risk config so generate_signals sees
+    # killzone_only, killzone_windows, and any other strategy-level knobs.
+    combined_cfg = {**risk_cfg, **strat_cfg}
+    signals = generate_signals(candles, detections, combined_cfg)
     print(f"  [{symbol}] {len(signals)} signals "
           f"(FVG {len(detections['fvg'])}, OB {len(detections['order_blocks'])}, "
           f"Sweeps {len(detections['liquidity_sweeps'])}, BOS {len(detections['bos'])}, "

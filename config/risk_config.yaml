@@ -9,6 +9,20 @@ risk:
   max_holding_bars: 36
   max_open_positions: 6              # one per major; correlation filter still applies
 
+  # --- Spread filter -----------------------------------------------------
+  # Reject entries when the live broker spread exceeds this many pips.
+  # Protects against news-spike fills. Set to 0 to disable.
+  max_spread_pips: 3.0
+
+  # --- MT5 reconnect settings -------------------------------------------
+  reconnect_retries: 3              # max attempts before aborting the tick
+  reconnect_delay_seconds: 30       # base delay; doubles on each retry
+
+  # --- Deal profit history window ----------------------------------------
+  # How many days back to scan MT5 deal history when recovering closed-trade
+  # PnL. Must exceed max_holding_bars / bars_per_day to avoid missed deals.
+  deal_profit_lookback_days: 7
+
   # --- Per-symbol contract value (notional per 1.0 lot) -----------------
   # Standard FX majors: 100,000 units. Adjust for indices, metals, etc.
   contract_value_per_symbol:
