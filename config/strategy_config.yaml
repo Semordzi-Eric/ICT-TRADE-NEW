@@ -1,59 +1,88 @@
 strategy:
-  # ----- Universe -----------------------------------------------------------
-  # Six FX majors. Run on M15. Expected aggregate ~3.5–4 trades/day.
+  # ----- Universe (16 markets) -----------------------------------------------
+  # FX Majors, Minors, Metals, Indices, Crypto CFDs.
+  # Each symbol's pip_size / spread limit / session type is in market_config.yaml.
   symbols:
+    # FX Majors
     - EURUSD
     - GBPUSD
     - USDJPY
+    - AUDUSD
+    - USDCAD
+    - NZDUSD
+    # FX Minors
+    - EURGBP
+    - EURJPY
+    - GBPJPY
+    # Metals
+    - XAUUSD
+    - XAGUSD
+    # Equity Indices (CFD)
+    - NAS100
+    - SPX500
+    - US30
+    # Crypto CFDs
+    - BTCUSD
+    - ETHUSD
+
   default_timeframe: M15
 
-  # ----- Per-trade & portfolio risk -----------------------------------------
-  risk_per_trade: 0.0035         # 0.35% per trade — 6 concurrent caps total at ~2.1%
-  max_daily_trades: 12           # aggregate across all symbols
-  daily_loss_limit: 0.03         # 3% daily DD halt
-  weekly_loss_limit: 0.06        # 6% weekly DD halt
+  # ----- Per-trade & portfolio risk -------------------------------------------
+  risk_per_trade: 0.0035          # 0.35% per trade — scales per symbol via adaptive sizing
+  max_daily_trades: 30            # aggregate across all 16 symbols (was 12 for 3 symbols)
+  daily_loss_limit: 0.03          # 3% daily DD halt
+  weekly_loss_limit: 0.06         # 6% weekly DD halt
   consecutive_loss_limit: 3
   consecutive_loss_cooldown_hours: 4
   min_model_probability: 0.65
 
-  # ----- Killzone filter ----------------------------------------------------
-  # When enabled, only generate signals during London open and NY open windows.
-  # ICT setups have the highest historical win rate at session opens.
-  # Set to false to trade all hours (useful for backtesting comparison).
+  # ----- Killzone filter -------------------------------------------------------
+  # FX / Metals: restrict to London open and NY open.
+  # Indices: US equity open (13:30–16:00 UTC).
+  # Crypto: 24/7 (killzone_only is ignored for crypto — see market_config.yaml).
+  # Set killzone_only: false to allow all-hours trading across all categories.
   killzone_only: true
   killzone_windows:             # UTC times — adjust for DST if needed
     london_open: ["08:00", "10:00"]
     ny_open:     ["13:00", "15:30"]
 
-  # ----- Higher-timeframe bias filter ---------------------------------------
+  # ----- Higher-timeframe bias filter -----------------------------------------
   # Only take M15 longs when H4 structure is bullish, and vice versa.
-  # Set to false to disable (counter-trend trading allowed).
   htf_filter_enabled: true
   htf_timeframe: "H4"
-  htf_bars: 200                 # H4 bars to fetch for bias detection
+  htf_bars: 200
 
-  # ----- Adaptive position sizing -------------------------------------------
-  # Automatically scale risk when rolling win rate deteriorates.
+  # ----- Adaptive position sizing ---------------------------------------------
   adaptive_sizing: true
-  adaptive_sizing_lookback: 10  # trailing trades to measure win rate
-  adaptive_sizing_low_wr: 0.35  # below this WR → scale risk by low_wr_mult
-  adaptive_sizing_high_wr: 0.45 # above this WR → restore normal risk
-  adaptive_sizing_low_mult: 0.7 # risk multiplier during drawdown (0.7 = 70% normal)
-  adaptive_sizing_kz_mult: 1.1  # bonus multiplier for killzone signals (10% larger)
+  adaptive_sizing_lookback: 10
+  adaptive_sizing_low_wr: 0.35
+  adaptive_sizing_high_wr: 0.45
+  adaptive_sizing_low_mult: 0.7
+  adaptive_sizing_kz_mult: 1.1
 
-  # ----- Rule-based-only fallback probability --------------------------------
-  # Used when no trained ML ensemble is available (--no-model mode or missing
-  # models_artifacts/). Lower than 0.65 threshold so signals still need
-  # structure confirmation but aren't gated by an uninformed model.
+  # ----- Rule-based-only fallback probability ---------------------------------
   rule_based_prob: 0.55
 
-  # ----- Correlation filter -------------------------------------------------
-  # Pairs that move together — block same-direction concurrent entries.
+  # ----- Correlation filter ---------------------------------------------------
   correlation_filter_pairs:
-    - ["EURUSD", "GBPUSD", 0.85]   # both EUR/USD-driven
-    - ["AUDUSD", "NZDUSD", 0.90]   # commodity-bloc twins
-    - ["EURUSD", "AUDUSD", 0.70]   # USD-side correlation
-    - ["USDJPY", "USDCAD", 0.65]   # USD-base correlation
-    - ["NAS100", "SPX500", 0.95]   # reserved for future indices use
+    - ["EURUSD", "GBPUSD", 0.85]
+    - ["AUDUSD", "NZDUSD", 0.90]
+    - ["EURUSD", "AUDUSD", 0.70]
+    - ["USDJPY", "USDCAD", 0.65]
+    - ["NAS100", "SPX500", 0.95]
+    - ["NAS100", "US30",   0.90]
+    - ["BTCUSD", "ETHUSD", 0.85]
+    - ["XAUUSD", "XAGUSD", 0.80]
+    - ["EURJPY", "GBPJPY", 0.80]
+
+  # ----- Intuition Mode --------------------------------------------------------
+  # When ML probability < min_model_probability, the bot can still fire a trade
+  # if enough ICT confluence factors stack up (see src/strategy/intuition_mode.py).
+  intuition_mode:
+    enabled: true
+    threshold_score: 8           # minimum confluence points needed (max possible ~14)
+    max_risk_multiplier: 2.0     # cap on position size boost in intuition mode
+    crypto_always_on: true       # crypto can trigger intuition trades outside killzones
+    log_all_scores: true         # log confluence score for every signal (for review)
 
   account_starting_balance: 10000.0

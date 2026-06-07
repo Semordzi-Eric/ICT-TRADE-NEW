@@ -1,8 +1,13 @@
-
 """Walk-forward training of LightGBM + XGBoost + LSTM with a logistic meta-model.
 
 The 'GT-Score' optimised here combines profit factor, win rate, sharpe,
 max drawdown, and a generalisation ratio (test-vs-train Sharpe).
+
+Per-symbol training:
+  Each call to ``train_walk_forward`` can be scoped to a single *symbol*.
+  When ``symbol`` is provided, artifacts are saved to
+  ``models_artifacts/<SYMBOL>/`` and the function returns ``avg_auc`` and
+  ``gt_score`` so the ``ModelRegistry`` can decide whether to promote.
 """
 from __future__ import annotations
 
@@ -109,6 +114,8 @@ def train_walk_forward(
     labels: pd.Series,
     config: Dict,
     output_dir: str = "models_artifacts",
+    symbol: Optional[str] = None,
+    data_years: int = 3,
 ) -> Dict:
     """Run walk-forward training of the full ensemble.
 
@@ -116,12 +123,19 @@ def train_walk_forward(
         features: feature matrix indexed by timestamp.
         labels: binary labels aligned to ``features``.
         config: model config dict (see ``config/model_config.yaml``).
-        output_dir: where to save fold artifacts.
+        output_dir: base directory for artifacts.
+        symbol: optional instrument name; artifacts go to ``output_dir/SYMBOL/``.
+        data_years: informational — recorded in the summary but does not
+            alter the data slice (caller should pre-filter features/labels).
 
     Returns:
-        Dict with per-fold metrics and the path to the final ensemble.
+        Dict with per-fold metrics, ensemble path, ``avg_auc``, and ``gt_score``.
     """
-    out = Path(output_dir)
+    # Per-symbol subdirectory when symbol is provided.
+    if symbol:
+        out = Path(output_dir) / symbol.upper()
+    else:
+        out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     if not isinstance(features.index, pd.DatetimeIndex):
@@ -284,16 +298,23 @@ def train_walk_forward(
         logger.info("OOF meta-model trained on %d samples across %d folds",
                     len(y_oof), len(oof_y))
 
-    # Persist
+    # Compute aggregate metrics for the ModelRegistry.
+    valid_aucs = [r.auc_test for r in fold_results if not np.isnan(r.auc_test)]
+    avg_auc = float(np.mean(valid_aucs)) if valid_aucs else float("nan")
+    # GT-score: placeholder using AUC as the primary signal.
+    # A full GT-score requires backtest results; the caller can override via the registry.
+    _gt = avg_auc * (1.0 + len(valid_aucs) * 0.01)  # slight bonus for more folds
+    computed_gt_score = float(_gt)
+
+    # Persist artifacts.
     artifact_path = out / "ensemble.pkl"
     with open(artifact_path, "wb") as f:
-        # LightGBM Booster supports pickling; keras model is saved separately to .h5
         save_payload = {
             "lightgbm": final_artifacts.get("lightgbm"),
-            "xgboost": final_artifacts.get("xgboost"),
-            "meta": final_artifacts.get("meta"),
+            "xgboost":  final_artifacts.get("xgboost"),
+            "meta":     final_artifacts.get("meta"),
             "feature_columns": final_artifacts.get("feature_columns"),
-            "lstm_timesteps": final_artifacts.get("lstm_timesteps"),
+            "lstm_timesteps":  final_artifacts.get("lstm_timesteps"),
         }
         pickle.dump(save_payload, f)
 
@@ -304,8 +325,18 @@ def train_walk_forward(
     with open(summary_path, "w") as f:
         json.dump([asdict(r) for r in fold_results], f, indent=2)
 
+    data_start = str(features.index.min().date()) if len(features) else ""
+    data_end   = str(features.index.max().date()) if len(features) else ""
+
     return {
-        "folds": [asdict(r) for r in fold_results],
-        "ensemble_path": str(artifact_path),
-        "summary_path": str(summary_path),
+        "folds":          [asdict(r) for r in fold_results],
+        "ensemble_path":  str(artifact_path),
+        "summary_path":   str(summary_path),
+        "avg_auc":        avg_auc,
+        "gt_score":       computed_gt_score,
+        "data_start":     data_start,
+        "data_end":       data_end,
+        "symbol":         symbol or "",
+        "data_years":     data_years,
+        "artifacts":      final_artifacts,   # in-memory; used by ModelRegistry
     }

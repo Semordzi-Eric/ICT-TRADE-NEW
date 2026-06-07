@@ -1,406 +1,289 @@
-# ICT-TRADE-NEW — Inner Circle Trader Algorithmic Trading Bot
+# ICT Trading Bot — Institutional-Grade Algorithmic Trader
 
-A **production-grade quantitative trading framework** built on the Inner Circle Trader (ICT) methodology. It combines precision market-structure detection with a stacked Machine Learning ensemble (LightGBM + XGBoost + LSTM), a full vectorised backtester, and a live MetaTrader 5 executor — all controllable from a web dashboard or the command line.
-
-> [!WARNING]
-> **For educational and research purposes only.** Algorithmic trading carries substantial financial risk. Always validate rigorously on a MT5 demo account before deploying real capital.
+> **Full ICT (Inner Circle Trader) concept implementation** — Fair Value Gaps, Order Blocks, Liquidity Sweeps, Market Structure, Killzones, and a 3-model ML ensemble running 24/7 across 16 markets.
 
 ---
 
-## ✨ What Was Built and Why
+## 🚀 Web Dashboard
 
-| Capability | Details |
+Everything you need is accessible from the browser — no CLI required.
+
+```bash
+python main.py --dashboard
+# → Open http://localhost:5000
+```
+
+| Page | What You Can Do |
 |---|---|
-| ICT concept detection | FVG, Order Blocks, Liquidity Sweeps, BOS, CHoCH — mathematically precise |
-| ML ensemble filter | LightGBM + XGBoost + LSTM stacked via logistic meta-model |
-| Walk-forward training | Temporal splits with purge gap — no lookahead bias |
-| Vectorised backtest | Slippage, commission, trailing stop, time stop |
-| Killzone filter | London open (08:00–10:00 UTC), NY open (13:00–15:30 UTC) — highest win-rate windows |
-| H4 bias filter | Only take M15 entries aligned with the H4 trend direction |
-| Adaptive sizing | Shrinks to 70% risk when rolling win rate drops below 35% |
-| Spread filter | Rejects entries when broker spread exceeds 3 pips |
-| MT5 reconnect | Exponential back-off reconnect (3 retries) — survives brief disconnects |
-| News filter | Forex Factory XML blackout 30 min around high-impact events |
-| Risk manager | Daily/weekly loss limits, drawdown halt, correlation filter, cooldown |
-| Web dashboard | Flask SSE dashboard — run backtests, train models, monitor live trading |
+| **Market Overview** | Live status grid for all 16 symbols — model AUC, sentiment score, news blackout, spread |
+| **Sentiment** | Multi-source sentiment scores (-1 to +1), upcoming high-impact events, trade clearance status |
+| **Supported Markets** | ICT compatibility guide for every asset class |
+| **Data** | Download 2–5yr historical data per symbol (MT5 preferred, yfinance fallback) |
+| **Train** | Walk-forward ensemble training — LightGBM + XGBoost + LSTM, per-symbol or all 16 at once |
+| **Backtest** | Simulate strategy with equity curve, trade table, and detection counts |
+| **Benchmark** | Full market leaderboard ranked by Sharpe — drift alerts for stale models |
+| **Live Trading** | Start/stop 24/7 executor with Intuition Mode toggle and real-time log |
+| **Model Registry** | Champion leaderboard, promote challengers, trigger retraining |
+| **Setup / MT5** | Connect to MetaTrader 5, view account balance and equity |
 
 ---
 
-## 🏛️ Architecture
+## 📊 Supported Markets (16 Symbols)
 
-```mermaid
-graph TD
-    A[OHLCV Market Feed<br>MT5 / Yahoo Finance] --> B[ICT Detection Engine]
-    B -->|FVG, OB, Sweeps, BOS/CHoCH| C[35-Feature Pipeline]
-    C --> D[ML Ensemble<br>LightGBM + XGBoost + LSTM]
-    D -->|Probability Score| E[Signal Gate<br>threshold ≥ 0.65]
-    E --> F{Filters}
-    F -->|Killzone?| G[Killzone Filter]
-    F -->|H4 Bias?| H[HTF Bias Filter]
-    F -->|Spread OK?| I[Spread Filter]
-    G & H & I --> J[Risk Manager]
-    J -->|Position Size| K[Execution]
-    K -->|Vectorised| L[Backtester]
-    K -->|Market Orders| M[MetaTrader 5 Live]
+### ✅ Native — Works Out of the Box
+
+| Market | Symbols | Why It Works |
+|---|---|---|
+| **FX Majors** | EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, NZDUSD | Native — built for this. Highest ICT liquidity pools & OBs |
+| **FX Minors** | EURGBP, EURJPY, GBPJPY | Same pip/OHLCV structure — same detection engine |
+| **Gold (XAUUSD)** | Gold vs USD | Very ICT-friendly — ICT himself trades gold heavily. High-liquidity sweeps, crystal-clear OBs |
+| **Silver (XAGUSD)** | Silver vs USD | Same as gold, slightly noisier — ATR adapts automatically |
+
+### ⚡ Works — Small Tweaks Applied
+
+| Market | Symbols | What Was Changed |
+|---|---|---|
+| **Equity Indices (CFD)** | NAS100, SPX500, US30 | `pip_size=1.0`, `contract_value=1.0`, US equity session gate (13:30–20:00 UTC), spread relaxed to 10–20pts |
+| **Crypto CFDs (via MT5)** | BTCUSD, ETHUSD | 24/7 session (no killzone blocking), spread relaxed to 50pts, 3yr training window |
+| **Crude Oil / WTI** | USOIL, UKOIL | High ATR — detection auto-adapts. Add to `symbols` list, reduce `risk_per_trade` to 0.002 |
+
+### Adding Any Symbol
+
+```yaml
+# config/strategy_config.yaml
+symbols:
+  - EURUSD
+  - GBPUSD
+  - XAUUSD    # ← Gold (already configured)
+  - USOIL     # ← Crude oil (add manually)
+```
+
+```yaml
+# config/risk_config.yaml
+contract_value_per_symbol:
+  USOIL: 1000.0   # 1 lot = 1000 barrels
 ```
 
 ---
 
-## 🚀 Quick Start
+## 🏗️ Architecture
 
-### Step 1 — Install Dependencies
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Web Dashboard (Flask)                       │
+│  Data │ Train │ Backtest │ Benchmark │ Live │ Registry          │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────────────────┐
+│                    Live Executor (24/7)                          │
+│  ThreadPoolExecutor — all 16 symbols simultaneously             │
+│                                                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
+│  │ MT5 Feed │  │Detection │  │ ML Infer │  │ Intuition Mode│  │
+│  │ M15 bars │  │FVG/OB/   │  │LightGBM  │  │ 9-factor ICT  │  │
+│  │          │  │Sweeps/BOS│  │+XGBoost  │  │ confluence    │  │
+│  │          │  │/CHoCH    │  │+LSTM     │  │ scorer        │  │
+│  └──────────┘  └──────────┘  └──────────┘  └───────────────┘  │
+│                                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌─────────────────────┐  │
+│  │ News Filter  │  │ Sentiment    │  │ Risk Manager        │  │
+│  │ FF XML feed  │  │ Engine       │  │ Adaptive sizing     │  │
+│  │ 30min blackout│ │ Multi-source │  │ Correlation filter  │  │
+│  └──────────────┘  └──────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────────────────┐
+│                     Model Registry                               │
+│  models_artifacts/EURUSD/ensemble.pkl (champion forever)        │
+│  models_artifacts/XAUUSD/ensemble.pkl                           │
+│  models_artifacts/BTCUSD/ensemble.pkl   ...                     │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-```powershell
-# Clone or download the project
+---
+
+## 🧠 ICT Strategy
+
+The bot implements the following ICT concepts on **M15** (default):
+
+| Concept | Implementation |
+|---|---|
+| **Fair Value Gaps (FVG)** | 3-candle gap detection, ATR-normalised minimum gap |
+| **Order Blocks (OB)** | Last bearish/bullish candle before impulsive move, tracks mitigation |
+| **Liquidity Sweeps** | Equal highs/lows broken then reversed (stop-hunt detection) |
+| **Break of Structure (BOS)** | Swing high/low broken — trend continuation |
+| **Change of Character (CHoCH)** | Counter-swing break — trend reversal signal |
+| **Killzones** | London Open (08–10 UTC) + NY Open (13–15:30 UTC) session gates |
+| **Higher-Timeframe Bias** | H4 structure must align with M15 signal direction |
+| **Intuition Mode** | 9-factor confluence scorer — fires below ML threshold when ≥8 ICT factors stack |
+
+### Killzones (UTC)
+
+| Session | Window | What Happens |
+|---|---|---|
+| **London Open** | 08:00–10:00 | OB sweeps from Asian range, main entry window |
+| **NY Open** | 13:00–15:30 | Second major liquidity sweep, continuation trades |
+| **Crypto** | 24/7 | No killzone restriction — Intuition Mode handles signal quality |
+| **Indices** | 13:30–20:00 | US equity session gate only |
+
+### Typical Trade Count
+
+| Scenario | Trades/Day |
+|---|---|
+| 3 FX majors, strict ML (≥0.65) | 1–3 |
+| 16 markets, Intuition Mode ON | 5–12 |
+| Max (all symbols, low threshold) | 15–30 |
+
+---
+
+## 🤖 ML Ensemble
+
+```
+Features (60+)     →  LightGBM  ─┐
+(FVG/OB/sweep/     →  XGBoost   ─┼→  Logistic Meta-Model  →  Probability [0,1]
+ BOS/CHoCH/        →  LSTM      ─┘
+ session/ATR/RSI)
+```
+
+- **Walk-forward cross-validation** — no lookahead bias
+- **Per-symbol champion models** saved to `models_artifacts/<SYMBOL>/`
+- **Auto-promotion** — new models only replace champions when GT-score is higher
+- **Drift detection** — AUC < 0.55 triggers retrain alert in dashboard
+
+### Intuition Mode Confluence Factors (max 14 pts)
+
+| Factor | Points |
+|---|---|
+| ML probability ≥ 0.65 | 3 |
+| ML probability ≥ 0.55 (below normal) | 2 |
+| H4 bias aligned | 1 |
+| Inside London/NY killzone | 1 |
+| Liquidity sweep in last 6 bars | 1 |
+| Active Order Block + FVG both aligned | 2 |
+| CHoCH within last 20 bars | 1 |
+| Sentiment score aligned (>±0.15) | 1 |
+| Spread < 1.5 pips | 1 |
+| Price inside Asian range | 1 |
+| **Threshold to fire** | **≥ 8** |
+
+---
+
+## 🗞️ News & Sentiment Engine
+
+| Source | Coverage | Refresh |
+|---|---|---|
+| Forex Factory XML | Weekly economic calendar (high-impact events) | Every 12h |
+| Reuters / BBC RSS | Keyword-based headline polarity | Every 1h |
+| CryptoPanic API | BTC/ETH news sentiment | Every 1h |
+| Pre-event warning | 60min before high-impact event → 50% risk reduction | Live |
+| Blackout window | 30min around event → trading paused | Live |
+
+---
+
+## ⚙️ Configuration
+
+### `config/strategy_config.yaml`
+- `symbols` — list of all 16 markets to trade
+- `killzone_windows` — London + NY session times (UTC)
+- `risk_per_trade` — base risk per trade (0.35% default)
+- `intuition_mode.enabled` — enable/disable Intuition Mode
+- `intuition_mode.threshold_score` — confluence points required (default: 8)
+
+### `config/risk_config.yaml`
+- `max_open_positions` — portfolio cap (default: 10)
+- `max_spread_pips_override` — per-symbol spread limits
+- `contract_value_per_symbol` — notional per lot per instrument
+
+### `config/market_config.yaml`
+- Per-symbol metadata: pip_size, category, session_type, active_hours
+- Sentiment keywords per symbol
+- Training data year range per symbol
+
+---
+
+## 📦 Installation
+
+```bash
+git clone <repo>
 cd ICT-TRADE-NEW
-
-# Create and activate a virtual environment
 python -m venv venv
 venv\Scripts\activate          # Windows
-# source venv/bin/activate     # Mac / Linux
-
-# Install all dependencies (includes Flask, LightGBM, XGBoost, MT5, etc.)
 pip install -r requirements.txt
-```
 
-> [!NOTE]
-> TensorFlow (LSTM model) is **optional** and commented out in `requirements.txt`. The ensemble works without it — LSTM predictions fall back to LightGBM. To enable LSTM, uncomment the `tensorflow` line and run `pip install tensorflow`.
-
-> [!NOTE]
-> `MetaTrader5` package is **Windows-only** and installs automatically. On Mac/Linux the package is skipped and the bot runs in backtest/train mode only.
-
----
-
-### Step 2 — Download Historical Data
-
-Before backtesting or training you need price data. The downloader tries MT5 first, then falls back to Yahoo Finance:
-
-```powershell
-# Download EURUSD, GBPUSD, USDJPY on M15 (from Yahoo Finance if MT5 not running)
-python main.py --download-data --symbols EURUSD GBPUSD USDJPY --timeframe M15
-```
-
-Data is saved as CSV files in `data/`. Expected filenames: `EURUSD_M15.csv`, `GBPUSD_M15.csv`, etc.
-
----
-
-### Step 3 — Run a Backtest
-
-```powershell
-# Single symbol
-python main.py --backtest --symbol EURUSD --timeframe M15 --plot
-
-# All configured symbols (from strategy_config.yaml)
-python main.py --backtest --multi --plot
-
-# Save metrics to JSON
-python main.py --backtest --multi --output logs/results.json
-```
-
-**Output example:**
-```
---- EURUSD ---
-  [EURUSD] loaded 45823 bars
-  [EURUSD] 312 signals (FVG 84, OB 178, Sweeps 621, BOS 43, CHoCH 28)
-  trades=312  win_rate=52.24%  pf=1.48  sharpe=0.91  net_pnl=+2,341.20  max_dd=-8.21%
-
-=== Portfolio Summary ===
-  total_trades              847
-  blended_win_rate          0.5186
-  avg_profit_factor         1.4300
-  avg_sharpe                0.8900
-  summed_net_pnl            6412.50
-  worst_max_dd             -0.0921
-```
-
-> [!TIP]
-> **Compare killzone modes.** The killzone filter (`killzone_only: true` in `strategy_config.yaml`) restricts signals to London open and NY open. To see raw results without it, temporarily set `killzone_only: false` and rerun.
-
----
-
-### Step 4 — Train the ML Ensemble
-
-Training requires at least ~5,000 price bars per symbol. The walk-forward trainer splits data chronologically: 12 months train → 3 months validation → 3 months test, repeated.
-
-```powershell
-python main.py --train --symbol EURUSD --timeframe M15
-```
-
-**Output example:**
-```
-Fold 0: train [2022-01..2023-01] val [2023-01..2023-04] test [2023-04..2023-07]
-Fold 0 AUC test = 0.5842
-Fold 1 AUC test = 0.5721
-OOF meta-model trained on 2184 samples across 3 folds
-Saved → models_artifacts/ensemble.pkl
-```
-
-- AUC > 0.55 means the model has a statistically meaningful edge over random
-- AUC ≈ 0.50 means no edge — do not trade with this model
-- Trained artifacts are saved to `models_artifacts/`
-
----
-
-### Step 5 — Launch the Web Dashboard
-
-```powershell
+# Launch dashboard
 python main.py --dashboard
 ```
 
-Open **[http://localhost:5000](http://localhost:5000)** in your browser.
-
-The dashboard provides:
-- **Backtest tab** — select symbols, run simulation, view equity curve + trade table
-- **Train tab** — launch walk-forward training, stream logs in real-time, view fold AUC
-- **Models tab** — browse trained artifacts, compare average AUC across runs
-- **Live tab** — connect MT5, start/stop the executor, monitor ticks and open positions
-
----
-
-### Step 6 — Go Live (MT5 Required)
-
-> [!CAUTION]
-> **Paper trade for at least 4–8 weeks on a demo account before using real money.** Verify backtest metrics, confirm the AUC > 0.55 on out-of-sample data, and check that live spreads are within acceptable range.
-
-```powershell
-# Set MT5 credentials as environment variables (recommended)
-$env:MT5_ACCOUNT  = "12345678"
-$env:MT5_PASSWORD = "your_password"
-$env:MT5_SERVER   = "ICMarkets-Demo"
-
-# Start the live executor
-python main.py --live --symbols EURUSD GBPUSD USDJPY --timeframe M15
-
-# Rule-based only mode (no ML model required — uses killzone + structure filters)
-python main.py --live --symbols EURUSD --no-model
-```
-
-MT5 must be open and logged in before running `--live`. The bot will:
-1. Connect to MT5 and read account balance
-2. Poll every 5 seconds for new closed bars
-3. Run detection → features → ML (if available) → killzone → H4 bias → spread → risk gates
-4. Place market orders with pre-set SL and TP
-5. Track open positions and update the risk manager on close
-
----
-
-## ⚙️ Configuration Reference
-
-All config lives in `config/`. Edit YAML files directly — no code changes needed.
-
-### `config/strategy_config.yaml`
-
-```yaml
-strategy:
-  symbols: [EURUSD, GBPUSD, USDJPY]   # instruments to trade
-  default_timeframe: M15
-
-  risk_per_trade: 0.0035               # 0.35% of account per trade
-  max_daily_trades: 12
-  daily_loss_limit: 0.03               # halt after 3% daily loss
-  weekly_loss_limit: 0.06              # halt after 6% weekly loss
-  min_model_probability: 0.65          # ML gate threshold
-
-  # Killzone filter — only trade session opens
-  killzone_only: true                  # set false to trade all hours
-  killzone_windows:
-    london_open: ["08:00", "10:00"]    # UTC
-    ny_open:     ["13:00", "15:30"]    # UTC
-
-  # H4 bias filter
-  htf_filter_enabled: true             # set false to allow counter-trend
-  htf_timeframe: "H4"
-  htf_bars: 200
-
-  # Adaptive position sizing
-  adaptive_sizing: true
-  adaptive_sizing_low_wr: 0.35         # shrink below this win rate
-  adaptive_sizing_high_wr: 0.45        # restore above this win rate
-  adaptive_sizing_low_mult: 0.7        # 70% of normal size in drawdown
-  adaptive_sizing_kz_mult: 1.1         # 10% bonus for killzone signals
-
-  # Rule-based-only fallback (no model loaded)
-  rule_based_prob: 0.55
-```
-
-### `config/risk_config.yaml`
-
-```yaml
-risk:
-  stop_loss_atr_multiplier: 1.5
-  take_profit_r_multiple: 2.0          # 2:1 risk/reward
-  trailing_stop_activation_r: 0.8      # trail activates at 0.8R profit
-  trailing_stop_atr_multiplier: 1.0
-  max_drawdown_halt: 0.10              # halt at 10% peak drawdown
-  max_holding_bars: 36                 # 9 hours on M15
-  max_open_positions: 6
-  max_spread_pips: 3.0                 # reject entries if spread > 3 pips
-  reconnect_retries: 3
-  reconnect_delay_seconds: 30
-  deal_profit_lookback_days: 7
-```
-
-### `config/detection_config.yaml`
-
-```yaml
-detection:
-  fvg_min_gap_atr: 0.6                 # minimum FVG size (ATR units)
-  order_block_min_move_atr: 0.6        # minimum displacement for OB
-  liquidity_sweep_atr_multiplier: 1.5  # minimum sweep depth
-  swing_lookback: 5                    # bars each side of swing point
-  bos_confirmation_bars: 2             # closes needed to confirm BOS
-```
-
-### `config/model_config.yaml`
-
-```yaml
-model:
-  walk_forward:
-    train_months: 12
-    val_months: 3
-    test_months: 3
-    purge_bars: 5          # prevents label bleed at fold boundaries
-  bayesian_iterations: 50  # hyperparameter search iterations
-```
-
----
-
-## 📂 Project Structure
-
-```text
-ICT-TRADE-NEW/
-├── config/
-│   ├── detection_config.yaml     # FVG, OB, sweep, BOS thresholds
-│   ├── model_config.yaml         # ML hyperparameters, walk-forward settings
-│   ├── risk_config.yaml          # risk limits, spread filter, reconnect
-│   └── strategy_config.yaml      # symbols, killzone, HTF, adaptive sizing
-│
-├── dashboard/
-│   ├── app.py                    # Flask API + SSE server
-│   ├── templates/index.html      # Single-page web terminal
-│   └── static/                   # CSS and JavaScript
-│
-├── data/                         # Downloaded OHLCV CSVs (e.g. EURUSD_M15.csv)
-├── logs/                         # Equity curve PNGs, event logs
-├── models_artifacts/             # Trained ensemble.pkl + training_summary.json
-│
-├── notebooks/                    # Jupyter analysis notebooks
-│
-├── scripts/
-│   ├── download_data.py          # Historical data downloader (MT5 → yfinance fallback)
-│   ├── run_backtest.py           # Multi-symbol vectorised backtest runner
-│   ├── run_live.py               # MT5 live executor launcher
-│   └── train_model.py            # Walk-forward ensemble trainer
-│
-├── src/
-│   ├── backtest/
-│   │   ├── engine.py             # Vectorised simulator (SL/TP/trail/time stop)
-│   │   └── metrics.py            # Sharpe, Sortino, Calmar, profit factor, etc.
-│   │
-│   ├── detection/
-│   │   ├── fvg.py                # Fair Value Gap detection
-│   │   ├── liquidity.py          # Sweeps, equal highs/lows, ATR
-│   │   ├── orderblock.py         # Order block detection + mitigation tracking
-│   │   ├── session.py            # London / NY / Asian session labels
-│   │   └── structure.py          # BOS and CHoCH detection
-│   │
-│   ├── features/
-│   │   ├── builder.py            # 35-feature pipeline (no lookahead)
-│   │   └── labels.py             # Triple-barrier labelling for ML training
-│   │
-│   ├── live/
-│   │   ├── executor.py           # Live trading loop (all filters wired in)
-│   │   ├── mt5_client.py         # MT5 wrapper (rates, orders, spread, deal history)
-│   │   └── onnx_export.py        # ONNX model export for low-latency inference
-│   │
-│   ├── models/
-│   │   ├── inference.py          # EnsembleModel — load + predict
-│   │   ├── lightgbm_model.py     # LightGBM train/predict helpers
-│   │   ├── lstm_model.py         # Keras LSTM train/predict helpers
-│   │   └── train_ensemble.py     # Walk-forward ensemble trainer
-│   │
-│   ├── strategy/
-│   │   ├── risk_manager.py       # Account-level gates + adaptive sizing
-│   │   └── rule_based.py         # Signal generation, scoring, killzone filter
-│   │
-│   └── utils/
-│       ├── data_loader.py        # CSV / MT5 data loader
-│       ├── htf_bias.py           # H4 bias cache for live executor
-│       ├── logging_utils.py      # Structured logging setup
-│       └── news_filter.py        # Forex Factory news blackout filter
-│
-├── tests/                        # pytest suite
-├── main.py                       # CLI dispatcher
-└── requirements.txt              # All dependencies
-```
+> **MetaTrader 5 required** for live trading and data download. The bot attaches to the already-open terminal — no credentials needed if you're logged in.
 
 ---
 
 ## 🧪 Testing
 
-```powershell
-# Run the full test suite
+```bash
 venv\Scripts\pytest tests/ -v
+# Expected: 39 passed
+```
 
-# Expected output
-# tests\test_detection.py .......   [ 63%]
-# tests\test_features.py ....       [100%]
-# 11 passed in 3.84s
+| Test File | Coverage |
+|---|---|
+| `test_detection.py` | FVG, OB, sweeps, BOS, CHoCH, session classification |
+| `test_features.py` | Feature pipeline, normalisation, correlation filter |
+| `test_registry.py` | Model promotion, leaderboard, manual approval mode |
+| `test_intuition.py` | All 9 confluence factors, risk multiplier scaling |
+| `test_sentiment.py` | Score clamping, news blackout, pre-event warning |
+
+---
+
+## 📁 Project Structure
+
+```
+ICT-TRADE-NEW/
+├── config/
+│   ├── strategy_config.yaml      # Symbols, killzones, intuition mode
+│   ├── risk_config.yaml          # Position sizing, spread limits
+│   ├── market_config.yaml        # Per-symbol metadata (NEW)
+│   ├── detection_config.yaml     # FVG/OB/sweep thresholds
+│   └── model_config.yaml         # ML hyperparameters
+├── src/
+│   ├── detection/                # FVG, OB, Sweeps, BOS, CHoCH
+│   ├── features/                 # Feature pipeline, labels
+│   ├── models/
+│   │   ├── train_ensemble.py     # Walk-forward trainer
+│   │   ├── inference.py          # EnsembleModel + from_registry()
+│   │   └── registry.py           # Per-symbol champion registry (NEW)
+│   ├── strategy/
+│   │   ├── rule_based.py         # Signal generation
+│   │   ├── risk_manager.py       # Adaptive sizing, portfolio gates
+│   │   └── intuition_mode.py     # ICT confluence scorer (NEW)
+│   ├── utils/
+│   │   ├── news_filter.py        # ForexFactory blackout filter
+│   │   └── sentiment_engine.py   # Multi-source sentiment (NEW)
+│   └── live/
+│       ├── executor.py           # 24/7 parallel executor (v2)
+│       └── mt5_client.py         # MetaTrader 5 interface
+├── dashboard/
+│   ├── app.py                    # Flask API (all operations)
+│   ├── templates/index.html      # Full SPA dashboard
+│   └── static/css/ + js/         # Premium dark UI
+├── scripts/
+│   └── benchmark_markets.py      # CLI market leaderboard
+├── tests/                        # 39 unit tests
+├── models_artifacts/             # Per-symbol champion models
+│   └── EURUSD/ensemble.pkl
+└── data/                         # Downloaded CSV files
 ```
 
 ---
 
-## 🛡️ Risk Management — How It Works
+## ⚠️ Risk Disclaimer
 
-Every potential trade passes through **six sequential gates** before an order is placed:
-
-```
-Signal Generated
-      │
-      ▼
-[1] ML Gate ──────────── probability < 0.65 → SKIP
-      │
-      ▼
-[2] Killzone Gate ─────── outside London/NY open → SKIP  (if enabled)
-      │
-      ▼
-[3] H4 Bias Gate ──────── counter-trend to H4 → SKIP     (if enabled)
-      │
-      ▼
-[4] Spread Gate ───────── broker spread > 3 pips → SKIP
-      │
-      ▼
-[5] Risk Manager ──────── daily limit / drawdown halt / cooldown / correlation → SKIP
-      │
-      ▼
-[6] Position Sizing ───── risk × adaptive_multiplier → volume
-      │
-      ▼
-   Place Order
-```
-
-**Adaptive position sizing** then scales the final volume:
-- Normal market: `risk_per_trade = 0.35%`
-- Win rate < 35% (10-trade rolling): `0.35% × 0.7 = 0.245%`
-- Signal in killzone: `0.35% × 1.1 = 0.385%`
-- Both: `0.35% × 0.7 × 1.1 = 0.27%`
+This software is for **educational and research purposes only**. Algorithmic trading involves substantial risk of loss. Always:
+- Test thoroughly on a **demo account** before going live
+- Never risk capital you cannot afford to lose
+- Monitor the bot regularly — no algorithm is infallible
+- Consult a qualified financial advisor before trading
 
 ---
 
-## ⚡ Recommended Workflow (First-Time Setup)
-
-```
-1. pip install -r requirements.txt
-2. python main.py --download-data --symbols EURUSD GBPUSD USDJPY
-3. python main.py --backtest --multi --plot        ← verify signals exist
-4. python main.py --train --symbol EURUSD          ← check AUC > 0.55
-5. python main.py --dashboard                      ← visual review
-6. [DEMO ONLY] python main.py --live --symbols EURUSD --timeframe M15
-7. [After 4–8 weeks demo] consider real capital
-```
-
----
-
-## 📜 License
-
-Personal / Educational use only. Redistribution or commercial execution is prohibited without explicit licensing.
+*Built on ICT methodology — Fair Value Gaps, Order Blocks, Liquidity Sweeps, Market Structure*

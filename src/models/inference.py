@@ -29,8 +29,26 @@ class EnsembleModel:
 
     @classmethod
     def from_dir(cls, dir_path: str) -> "EnsembleModel":
+        """Load from a specific directory (legacy path — use from_registry instead)."""
         d = Path(dir_path)
         return cls(str(d / "ensemble.pkl"), str(d / "lstm.keras"))
+
+    @classmethod
+    def from_registry(cls, symbol: str, base_dir: str = "models_artifacts") -> Optional["EnsembleModel"]:
+        """Load the champion model for *symbol* from the model registry.
+
+        Returns ``None`` if no champion has been saved for this symbol yet.
+        """
+        sym_dir = Path(base_dir) / symbol.upper()
+        pkl_path = sym_dir / "ensemble.pkl"
+        if not pkl_path.exists():
+            return None
+        try:
+            return cls(str(pkl_path), str(sym_dir / "lstm.keras"))
+        except Exception:
+            logger.warning("EnsembleModel.from_registry: failed to load %s", symbol)
+            return None
+
 
     def predict(self, features: pd.DataFrame) -> np.ndarray:
         """Predict success probability for each row of `features`."""

@@ -4,31 +4,57 @@ risk:
   stop_loss_atr_multiplier: 1.5
   take_profit_r_multiple: 2.0
   trailing_stop_activation_r: 0.8   # activate trail when 0.8R in profit
-  trailing_stop_atr_multiplier: 1.0  # trail by 1 ATR below/above close
-  max_drawdown_halt: 0.10            # 10% account peak DD halts trading
-  max_holding_bars: 36
-  max_open_positions: 6              # one per major; correlation filter still applies
+  trailing_stop_atr_multiplier: 1.0
+  max_drawdown_halt: 0.10            # 10% peak DD halts all trading
+  max_holding_bars: 36               # 9 hours on M15
+  max_open_positions: 10             # increased from 6 (16 symbols need more headroom)
 
-  # --- Spread filter -----------------------------------------------------
-  # Reject entries when the live broker spread exceeds this many pips.
-  # Protects against news-spike fills. Set to 0 to disable.
+  # --- Spread filter ---------------------------------------------------------
+  # Per-symbol overrides are in market_config.yaml; this is the global default.
   max_spread_pips: 3.0
 
-  # --- MT5 reconnect settings -------------------------------------------
-  reconnect_retries: 3              # max attempts before aborting the tick
-  reconnect_delay_seconds: 30       # base delay; doubles on each retry
+  # --- MT5 reconnect settings ------------------------------------------------
+  reconnect_retries: 3
+  reconnect_delay_seconds: 30
 
-  # --- Deal profit history window ----------------------------------------
-  # How many days back to scan MT5 deal history when recovering closed-trade
-  # PnL. Must exceed max_holding_bars / bars_per_day to avoid missed deals.
+  # --- Deal profit history window --------------------------------------------
   deal_profit_lookback_days: 7
 
-  # --- Per-symbol contract value (notional per 1.0 lot) -----------------
-  # Standard FX majors: 100,000 units. Adjust for indices, metals, etc.
+  # --- Per-symbol contract value (notional per 1.0 lot) ---------------------
+  # FX Majors & Minors: 100,000 units
+  # Metals (Gold/Silver): 100 troy oz per lot (XAU = 100, XAG = 5000)
+  # Indices: 1 index point per lot (brokers vary — verify with your broker)
+  # Crypto: 1 BTC / 1 ETH per lot (micro lots 0.01 are common)
   contract_value_per_symbol:
+    # FX Majors
     EURUSD: 100000.0
     GBPUSD: 100000.0
     USDJPY: 100000.0
     AUDUSD: 100000.0
     USDCAD: 100000.0
     NZDUSD: 100000.0
+    # FX Minors
+    EURGBP: 100000.0
+    EURJPY: 100000.0
+    GBPJPY: 100000.0
+    # Metals
+    XAUUSD: 100.0      # 1 lot = 100 troy oz — $1 move = $100 P&L per lot
+    XAGUSD: 5000.0     # 1 lot = 5000 troy oz
+    # Equity Indices (CFD — 1 lot = 1 index point P&L per $1 move)
+    NAS100: 1.0
+    SPX500: 1.0
+    US30:   1.0
+    # Crypto CFDs (1 lot = 1 BTC or 1 ETH — use 0.01 micro lots in practice)
+    BTCUSD: 1.0
+    ETHUSD: 1.0
+
+  # --- Per-symbol spread overrides ------------------------------------------
+  # These override max_spread_pips for instruments with wider natural spreads.
+  max_spread_pips_override:
+    NAS100:  10.0    # index spread in index points (pip_size=1.0)
+    SPX500:   5.0
+    US30:    20.0
+    XAUUSD:   5.0   # gold spread in pips (pip_size=0.1 → $0.50 per pip)
+    XAGUSD:   8.0
+    BTCUSD: 50.0    # crypto spread in USD "pips" (pip_size=1.0)
+    ETHUSD: 20.0
