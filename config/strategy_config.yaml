@@ -18,8 +18,8 @@ strategy:
     - XAUUSD
     - XAGUSD
     # Equity Indices (CFD)
-    - NAS100
-    - SPX500
+    - US100
+    - US500
     - US30
     # Crypto CFDs
     - BTCUSD

@@ -14,7 +14,7 @@
   <!-- ═══════════════════════════════════════════════════════ SIDEBAR -->
   <nav id="sidebar">
     <div class="sidebar-logo">
-      <div class="logo-icon">⚡</div>
+      <div class="logo-icon"></div>
       <div class="logo-text">ICT Bot<span>Control Panel</span></div>
     </div>
 
@@ -22,46 +22,46 @@
       <div class="nav-section">
         <div class="nav-label">Overview</div>
         <button class="nav-item active" data-page="overview" id="nav-overview">
-          <span class="nav-icon">🌐</span><span>Market Overview</span>
+          <span>Market Overview</span>
         </button>
         <button class="nav-item" data-page="sentiment" id="nav-sentiment">
-          <span class="nav-icon">📡</span><span>Sentiment</span>
+          <span>Sentiment</span>
         </button>
         <button class="nav-item" data-page="markets" id="nav-markets">
-          <span class="nav-icon">📊</span><span>Supported Markets</span>
+          <span>Supported Markets</span>
         </button>
       </div>
 
       <div class="nav-section">
         <div class="nav-label">Pipeline</div>
         <button class="nav-item" data-page="data" id="nav-data">
-          <span class="nav-icon">💾</span><span>Data</span>
+          <span>Data</span>
         </button>
         <button class="nav-item" data-page="train" id="nav-train">
-          <span class="nav-icon">🧠</span><span>Train</span>
+          <span>Train</span>
         </button>
         <button class="nav-item" data-page="backtest" id="nav-backtest">
-          <span class="nav-icon">📈</span><span>Backtest</span>
+          <span>Backtest</span>
         </button>
         <button class="nav-item" data-page="benchmark" id="nav-benchmark">
-          <span class="nav-icon">🏆</span><span>Benchmark</span>
+          <span>Benchmark</span>
         </button>
       </div>
 
       <div class="nav-section">
         <div class="nav-label">Live</div>
         <button class="nav-item" data-page="live" id="nav-live">
-          <span class="nav-icon">🟢</span><span>Live Trading</span>
+          <span>Live Trading</span>
         </button>
         <button class="nav-item" data-page="registry" id="nav-registry">
-          <span class="nav-icon">🗃️</span><span>Model Registry</span>
+          <span>Model Registry</span>
         </button>
       </div>
 
       <div class="nav-section">
         <div class="nav-label">System</div>
         <button class="nav-item" data-page="setup" id="nav-setup">
-          <span class="nav-icon">⚙️</span><span>Setup / MT5</span>
+          <span>Setup / MT5</span>
         </button>
       </div>
     </div>
@@ -89,7 +89,11 @@
           <div class="live-dot"></div>
           <span id="live-badge-text">Idle</span>
         </div>
-        <button class="btn btn-sm btn-outline" onclick="App.refreshAll()">↻ Refresh</button>
+        <div class="toggle-wrap" style="gap:8px">
+          <span class="toggle-label" style="font-size:12px">Dark</span>
+          <div class="toggle" id="theme-toggle" onclick="toggleTheme()"></div>
+        </div>
+        <button class="btn btn-sm btn-outline" onclick="App.refreshAll()">Refresh</button>
       </div>
     </header>
 
@@ -98,7 +102,6 @@
       <div class="grid-4 mb-16" id="overview-stats"></div>
       <div class="card">
         <div class="card-header">
-          <span style="font-size:16px">🌐</span>
           <div><div class="card-title">All Markets</div><div class="card-sub">Live status, model AUC, sentiment & news</div></div>
           <button class="btn btn-sm btn-outline" style="margin-left:auto" onclick="Pages.overview.load()">Refresh</button>
         </div>
@@ -112,16 +115,16 @@
     <div class="page fade-in" id="page-sentiment">
       <div class="grid-2 mb-16">
         <div class="card">
-          <div class="card-header"><span>📡</span><div><div class="card-title">Market Sentiment</div><div class="card-sub">Multi-source score: -1 bearish → +1 bullish</div></div></div>
+          <div class="card-header"><div><div class="card-title">Market Sentiment</div><div class="card-sub">Multi-source score: -1 bearish → +1 bullish</div></div></div>
           <div id="sentiment-bars"></div>
         </div>
         <div class="card">
-          <div class="card-header"><span>📅</span><div><div class="card-title">Upcoming Events (24h)</div><div class="card-sub">High-impact economic calendar</div></div></div>
+          <div class="card-header"><div><div class="card-title">Upcoming Events (24h)</div><div class="card-sub">High-impact economic calendar</div></div></div>
           <div id="upcoming-events"><div class="empty-state"><div class="empty-icon">📭</div><h3>No upcoming events</h3></div></div>
         </div>
       </div>
       <div class="card">
-        <div class="card-header"><span>🚦</span><div><div class="card-title">Trade Clearance Status</div><div class="card-sub">Active news blackouts & pre-event warnings</div></div></div>
+        <div class="card-header"><div><div class="card-title">Trade Clearance Status</div><div class="card-sub">Active news blackouts & pre-event warnings</div></div></div>
         <div class="table-wrap"><table id="clearance-table">
           <thead><tr><th>Symbol</th><th>Status</th><th>Score</th><th>Label</th><th>Events Today</th><th>Sources</th></tr></thead>
           <tbody id="clearance-body"></tbody>
@@ -132,7 +135,6 @@
     <!-- ─── PAGE: Supported Markets ─────────────────────────────── -->
     <div class="page fade-in" id="page-markets">
       <div class="alert alert-info mb-16">
-        <span>ℹ️</span>
         <div>All markets are pre-configured. Enable or disable any symbol in <strong>Setup → strategy_config.yaml</strong>. The ICT detection engine (FVG, OB, sweeps, structure) works natively across all liquid OHLCV markets.</div>
       </div>
 
@@ -163,7 +165,7 @@
 
       <div class="grid-2">
         <div class="card">
-          <div class="card-header"><span>⚙️</span><div><div class="card-title">Adding a New Symbol</div></div></div>
+          <div class="card-header"><div><div class="card-title">Adding a New Symbol</div></div></div>
           <div style="font-family:var(--font-mono);font-size:12px;background:var(--bg-base);padding:14px;border-radius:8px;color:#94a3b8;line-height:1.8">
             <span style="color:#60a5fa"># config/strategy_config.yaml</span><br>
             <span style="color:#f1f5f9">symbols:</span><br>
@@ -177,15 +179,15 @@
           </div>
         </div>
         <div class="card">
-          <div class="card-header"><span>🔄</span><div><div class="card-title">Session Logic</div></div></div>
+          <div class="card-header"><div><div class="card-title">Session Logic</div></div></div>
           <div style="font-size:13px;line-height:2">
             <div>🔵 <strong>FX / Metals</strong> — London (08–10) + NY (13–15:30) UTC killzones</div>
             <div>🟣 <strong>Indices</strong> — US equity session only: 13:30–20:00 UTC</div>
-            <div>🟢 <strong>Crypto</strong> — 24/7, no session blocking</div>
+            <div><strong>Crypto</strong> — 24/7, no session blocking</div>
             <div>🟡 <strong>Metals (XAU/XAG)</strong> — Near-24/7, pauses 21–22 UTC (CME lunch)</div>
           </div>
           <div class="alert alert-info" style="margin-top:12px;font-size:12px">
-            <span>💡</span> Intuition Mode can fire crypto trades even outside normal ICT setups when 8+ confluence factors align.
+            <span></span> Intuition Mode can fire crypto trades even outside normal ICT setups when 8+ confluence factors align.
           </div>
         </div>
       </div>
@@ -195,7 +197,7 @@
     <div class="page fade-in" id="page-data">
       <div class="grid-2 mb-16">
         <div class="card">
-          <div class="card-header"><span>⬇️</span><div><div class="card-title">Download Historical Data</div><div class="card-sub">MT5 preferred, yfinance fallback</div></div></div>
+          <div class="card-header"><div><div class="card-title">Download Historical Data</div><div class="card-sub">MT5 preferred, yfinance fallback</div></div></div>
           <div class="form-group">
             <label class="form-label">Training Window</label>
             <select class="form-control" id="dl-years">
@@ -221,13 +223,13 @@
           <div style="display:flex;gap:8px;margin-top:8px">
             <button class="btn btn-outline btn-sm" onclick="UI.selectAll('dl-symbols')">All</button>
             <button class="btn btn-outline btn-sm" onclick="UI.selectNone('dl-symbols')">None</button>
-            <button class="btn btn-primary" id="dl-btn" onclick="Pages.data.download()" style="margin-left:auto">⬇ Download</button>
+            <button class="btn btn-primary" id="dl-btn" onclick="Pages.data.download()" style="margin-left:auto">Download</button>
           </div>
           <div class="log-console mt-12" id="dl-log" style="margin-top:12px;height:180px;display:none"></div>
         </div>
 
         <div class="card">
-          <div class="card-header"><span>📁</span><div><div class="card-title">Available Datasets</div><div class="card-sub">Cached CSV files</div></div></div>
+          <div class="card-header"><div><div class="card-title">Available Datasets</div><div class="card-sub">Cached CSV files</div></div></div>
           <div class="table-wrap"><table>
             <thead><tr><th>Symbol</th><th>TF</th><th>Bars</th><th>Size</th><th>Last Updated</th></tr></thead>
             <tbody id="data-status-body"><tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px">Loading…</td></tr></tbody>
@@ -248,7 +250,7 @@
         <div class="tab-panel active" id="tab-train-single">
           <div class="grid-2 mb-16">
             <div class="card">
-              <div class="card-header"><span>🧠</span><div><div class="card-title">Train Champion Model</div><div class="card-sub">Walk-forward ensemble: LightGBM + XGBoost + LSTM</div></div></div>
+              <div class="card-header"><div><div class="card-title">Train Champion Model</div><div class="card-sub">Walk-forward ensemble: LightGBM + XGBoost + LSTM</div></div></div>
               <div class="form-group">
                 <label class="form-label">Symbol</label>
                 <select class="form-control" id="train-symbol"></select>
@@ -273,10 +275,10 @@
                 <div class="toggle on" id="auto-promote-toggle" onclick="UI.toggle(this,'auto-promote-toggle')"></div>
                 <span class="toggle-label">Auto-promote to Registry if better</span>
               </div>
-              <button class="btn btn-primary" id="train-btn" onclick="Pages.train.start()">🚀 Start Training</button>
+              <button class="btn btn-primary" id="train-btn" onclick="Pages.train.start()">Start Training</button>
             </div>
             <div class="card">
-              <div class="card-header"><span>📊</span><div><div class="card-title">Training Progress</div></div></div>
+              <div class="card-header"><div><div class="card-title">Training Progress</div></div></div>
               <div class="log-console" id="train-log"><span style="color:var(--text-3)">Training output will appear here…</span></div>
               <div id="train-result" style="margin-top:12px"></div>
             </div>
@@ -287,9 +289,8 @@
         <div class="tab-panel" id="tab-train-all">
           <div class="grid-2 mb-16">
             <div class="card">
-              <div class="card-header"><span>🌍</span><div><div class="card-title">Train All 16 Markets</div><div class="card-sub">Sequential training — each champion auto-promoted</div></div></div>
+              <div class="card-header"><div><div class="card-title">Train All 16 Markets</div><div class="card-sub">Sequential training — each champion auto-promoted</div></div></div>
               <div class="alert alert-info mb-16">
-                <span>⏱️</span>
                 <div>Estimated time: <strong>30–90 minutes</strong> depending on data size and hardware. The live bot continues running during training.</div>
               </div>
               <div class="form-group">
@@ -308,11 +309,11 @@
               <div style="display:flex;gap:8px;margin-top:8px">
                 <button class="btn btn-outline btn-sm" onclick="UI.selectAll('train-all-symbols')">All</button>
                 <button class="btn btn-outline btn-sm" onclick="UI.selectNone('train-all-symbols')">None</button>
-                <button class="btn btn-primary" id="train-all-btn" onclick="Pages.train.startAll()" style="margin-left:auto">🚀 Train All</button>
+                <button class="btn btn-primary" id="train-all-btn" onclick="Pages.train.startAll()" style="margin-left:auto">Train All</button>
               </div>
             </div>
             <div class="card">
-              <div class="card-header"><span>📋</span><div><div class="card-title">Batch Progress</div></div></div>
+              <div class="card-header"><div><div class="card-title">Batch Progress</div></div></div>
               <div class="log-console" id="train-all-log"><span style="color:var(--text-3)">Batch output will appear here…</span></div>
               <div id="train-all-result" style="margin-top:12px"></div>
             </div>
@@ -325,7 +326,7 @@
     <div class="page fade-in" id="page-backtest">
       <div class="grid-2 mb-16">
         <div class="card">
-          <div class="card-header"><span>⚗️</span><div><div class="card-title">Run Backtest</div><div class="card-sub">Simulate strategy on historical data</div></div></div>
+          <div class="card-header"><div><div class="card-title">Run Backtest</div><div class="card-sub">Simulate strategy on historical data</div></div></div>
           <div class="form-group">
             <label class="form-label">Symbols</label>
             <div class="symbol-grid" id="bt-symbols"></div>
@@ -346,10 +347,10 @@
             <div class="toggle on" id="bt-use-model-toggle" onclick="UI.toggle(this,'bt-use-model-toggle')"></div>
             <span class="toggle-label">Use champion model (if available)</span>
           </div>
-          <button class="btn btn-primary" id="bt-btn" onclick="Pages.backtest.run()">▶ Run Backtest</button>
+          <button class="btn btn-primary" id="bt-btn" onclick="Pages.backtest.run()">Run Backtest</button>
         </div>
         <div class="card">
-          <div class="card-header"><span>📋</span><div><div class="card-title">Progress Log</div></div></div>
+          <div class="card-header"><div><div class="card-title">Progress Log</div></div></div>
           <div class="log-console" id="bt-log"><span style="color:var(--text-3)">Backtest output will appear here…</span></div>
         </div>
       </div>
@@ -360,8 +361,8 @@
     <!-- ─── PAGE: Benchmark ────────────────────────────────────────── -->
     <div class="page fade-in" id="page-benchmark">
       <div class="card mb-16">
-        <div class="card-header"><span>🏆</span><div><div class="card-title">Market Leaderboard</div><div class="card-sub">Ranked by Sharpe ratio — all champion models</div></div>
-          <button class="btn btn-primary" id="bench-btn" onclick="Pages.benchmark.run()" style="margin-left:auto">▶ Run Benchmark</button>
+        <div class="card-header"><div><div class="card-title">Market Leaderboard</div><div class="card-sub">Ranked by Sharpe ratio — all champion models</div></div>
+          <button class="btn btn-primary" id="bench-btn" onclick="Pages.benchmark.run()" style="margin-left:auto">Run Benchmark</button>
         </div>
         <div class="form-group">
           <label class="form-label">Symbols to Benchmark</label>
@@ -381,10 +382,10 @@
     <div class="page fade-in" id="page-live">
       <div class="grid-2 mb-16">
         <div class="card">
-          <div class="card-header"><span>🟢</span><div><div class="card-title">Live Executor</div><div class="card-sub">24/7 multi-market automated trading</div></div></div>
+          <div class="card-header"><div><div class="card-title">Live Executor</div><div class="card-sub">24/7 multi-market automated trading</div></div></div>
 
           <div class="intuition-panel mb-16" style="margin-bottom:14px">
-            <div class="intuition-title">🧠 Intuition Mode
+            <div class="intuition-title">Intuition Mode
               <div class="toggle on" id="intuition-toggle" onclick="Pages.live.toggleIntuition()" style="margin-left:auto"></div>
             </div>
             <div class="intuition-desc">When active: fires trades below the 0.65 ML threshold if ≥8 ICT confluence factors align (OB + FVG + CHoCH + liquidity sweep + H4 bias + killzone + sentiment + spread). Max risk multiplier: 2×.</div>
@@ -404,13 +405,13 @@
           </div>
 
           <div style="display:flex;gap:8px;margin-top:8px">
-            <button class="btn btn-success btn-lg" id="live-start-btn" onclick="Pages.live.start()">▶ Start Live</button>
-            <button class="btn btn-danger btn-lg" id="live-stop-btn" onclick="Pages.live.stop()" disabled>⏹ Stop</button>
+            <button class="btn btn-success btn-lg" id="live-start-btn" onclick="Pages.live.start()">Start Live</button>
+            <button class="btn btn-danger btn-lg" id="live-stop-btn" onclick="Pages.live.stop()" disabled>Stop</button>
           </div>
         </div>
 
         <div class="card">
-          <div class="card-header"><span>📟</span><div><div class="card-title">Live Log</div><div class="card-sub" id="live-status-sub">Idle</div></div>
+          <div class="card-header"><div><div class="card-title">Live Log</div><div class="card-sub" id="live-status-sub">Idle</div></div>
             <button class="btn btn-sm btn-outline" onclick="Pages.live.clearLog()" style="margin-left:auto">Clear</button>
           </div>
           <div class="log-console" id="live-log-console"><span style="color:var(--text-3)">Start the executor to see live output…</span></div>
@@ -418,10 +419,10 @@
       </div>
 
       <div class="card">
-        <div class="card-header"><span>ℹ️</span><div><div class="card-title">How It Works</div></div></div>
+        <div class="card-header"><div><div class="card-title">How It Works</div></div></div>
         <div class="grid-3" style="font-size:13px;gap:16px">
           <div><strong>🔎 Detection</strong><p style="color:var(--text-2);margin-top:4px;line-height:1.6">FVG + Order Blocks + Liquidity Sweeps + BOS + CHoCH on M15 bars — all 16 markets simultaneously via threads.</p></div>
-          <div><strong>🧠 ML + Intuition</strong><p style="color:var(--text-2);margin-top:4px;line-height:1.6">LightGBM + XGBoost + LSTM ensemble. When ML probability &lt; 0.65, Intuition Mode scores 9 confluence factors and can still fire a trade.</p></div>
+          <div><strong>ML + Intuition</strong><p style="color:var(--text-2);margin-top:4px;line-height:1.6">LightGBM + XGBoost + LSTM ensemble. When ML probability &lt; 0.65, Intuition Mode scores 9 confluence factors and can still fire a trade.</p></div>
           <div><strong>🛡️ Risk Management</strong><p style="color:var(--text-2);margin-top:4px;line-height:1.6">Adaptive sizing based on rolling win rate. News blackout 30min around high-impact events. Correlation filter prevents double exposure.</p></div>
         </div>
       </div>
@@ -430,7 +431,7 @@
     <!-- ─── PAGE: Model Registry ───────────────────────────────────── -->
     <div class="page fade-in" id="page-registry">
       <div class="card mb-16">
-        <div class="card-header"><span>🗃️</span><div><div class="card-title">Champion Model Registry</div><div class="card-sub">Per-symbol best models — saved forever, promoted only when a better model is trained</div></div>
+        <div class="card-header"><div><div class="card-title">Champion Model Registry</div><div class="card-sub">Per-symbol best models — saved forever, promoted only when a better model is trained</div></div>
           <button class="btn btn-sm btn-outline" onclick="Pages.registry.load()" style="margin-left:auto">Refresh</button>
         </div>
         <div class="table-wrap"><table>
@@ -440,7 +441,6 @@
       </div>
 
       <div class="alert alert-info">
-        <span>💡</span>
         <div>Champions are auto-promoted when a new training run produces a higher GT-Score. To retrain a symbol, go to <strong>Train → Single Symbol</strong> and select it. The registry will automatically compare and promote if better.</div>
       </div>
     </div>
@@ -449,8 +449,8 @@
     <div class="page fade-in" id="page-setup">
       <div class="grid-2 mb-16">
         <div class="card">
-          <div class="card-header"><span>🔌</span><div><div class="card-title">MetaTrader 5 Connection</div><div class="card-sub">Leave blank to attach to the open terminal</div></div></div>
-          <div id="mt5-status-banner" class="alert alert-warn mb-16"><span>⚠️</span><span>Not connected — open MetaTrader 5 on your desktop first</span></div>
+          <div class="card-header"><div><div class="card-title">MetaTrader 5 Connection</div><div class="card-sub">Leave blank to attach to the open terminal</div></div></div>
+          <div id="mt5-status-banner" class="alert alert-warn mb-16"><span></span><span>Not connected — open MetaTrader 5 on your desktop first</span></div>
           <div class="form-group">
             <label class="form-label">Account Number (optional)</label>
             <input type="number" class="form-control" id="mt5-account" placeholder="Leave blank — use open terminal"/>
@@ -467,15 +467,15 @@
         </div>
 
         <div class="card">
-          <div class="card-header"><span>🏦</span><div><div class="card-title">Account Info</div></div></div>
+          <div class="card-header"><div><div class="card-title">Account Info</div></div></div>
           <div id="account-info">
-            <div class="empty-state"><div class="empty-icon">🔌</div><h3>Connect MT5 to see account details</h3></div>
+            <div class="empty-state"><div class="empty-icon"></div><h3>Connect MT5 to see account details</h3></div>
           </div>
         </div>
       </div>
 
       <div class="card">
-        <div class="card-header"><span>📋</span><div><div class="card-title">Quick Start Guide</div></div></div>
+        <div class="card-header"><div><div class="card-title">Quick Start Guide</div></div></div>
         <div style="font-size:13px;line-height:1.8;color:var(--text-2)">
           <p><strong style="color:var(--text-1)">1.</strong> Open MetaTrader 5 on your desktop and log in to your account</p>
           <p><strong style="color:var(--text-1)">2.</strong> Click <strong style="color:var(--accent)">Connect</strong> above — the bot attaches to the running terminal</p>
@@ -484,15 +484,37 @@
           <p><strong style="color:var(--text-1)">5.</strong> Go to <strong style="color:var(--accent)">Benchmark</strong> → Review leaderboard → confirm models are performing</p>
           <p><strong style="color:var(--text-1)">6.</strong> Go to <strong style="color:var(--accent)">Live Trading</strong> → Select symbols → Enable Intuition Mode → Start</p>
           <div class="alert alert-warn" style="margin-top:12px">
-            <span>⚠️</span> Always test on a <strong>demo account</strong> first. Never risk money you cannot afford to lose.
+            <span></span> Always test on a <strong>demo account</strong> first. Never risk money you cannot afford to lose.
           </div>
         </div>
       </div>
     </div>
 
   </div><!-- /main -->
-</div><!-- /app -->
-
+<script>
+  function toggleTheme() {
+    const html = document.documentElement;
+    const isDark = html.getAttribute('data-theme') === 'dark';
+    const newTheme = isDark ? 'light' : 'dark';
+    html.setAttribute('data-theme', newTheme);
+    localStorage.setItem('theme', newTheme);
+    const toggleDiv = document.getElementById('theme-toggle');
+    if (newTheme === 'dark') {
+      toggleDiv.classList.add('on');
+    } else {
+      toggleDiv.classList.remove('on');
+    }
+  }
+  // Initialize theme on load
+  const savedTheme = localStorage.getItem('theme') || 'light';
+  document.documentElement.setAttribute('data-theme', savedTheme);
+  const tgl = document.getElementById('theme-toggle');
+  if (savedTheme === 'dark') {
+    tgl.classList.add('on');
+  } else {
+    tgl.classList.remove('on');
+  }
+</script>
 <script src="/static/js/app.js"></script>
 </body>
 </html>

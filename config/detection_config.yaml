@@ -1,14 +1,14 @@
 detection:
   atr_period: 14
-  liquidity_sweep_atr_multiplier: 1.5
+  liquidity_sweep_atr_multiplier: 0.1
   fvg_min_gap_atr: 0.6
   order_block_min_move_atr: 0.6
   swing_lookback: 5
   bos_confirmation_bars: 2
   choch_swing_lookback: 5
   equal_hl_tolerance_atr: 0.001
-  liquidity_lookback: 50
-  ob_lookback: 100
+  liquidity_lookback: 400
+  ob_lookback: 1000000
   session_times:
     london: ["08:00", "17:00"]
     newyork: ["13:00", "22:00"]

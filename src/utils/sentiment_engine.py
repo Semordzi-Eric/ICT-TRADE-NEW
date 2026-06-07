@@ -210,11 +210,11 @@ class SentimentEngine:
             if abs(delta_secs) <= window.total_seconds():
                 mins = int(abs(delta_secs) / 60)
                 direction = "before" if now < evt_dt else "after"
-                return False, (
+                return True, (
                     f"news blackout: '{evt.get('title', '')}' "
                     f"{mins}min {direction} — {evt_dt.strftime('%H:%M UTC')}"
                 )
-        return True, "ok"
+        return False, "ok"
 
     def upcoming_events(self, within_hours: float = 24.0) -> List[Dict]:
         """Return high-impact FF events occurring within the next N hours."""

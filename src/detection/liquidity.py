@@ -97,8 +97,8 @@ def _swing_highs_lows(candles: pd.DataFrame, lookback: int = 5) -> Tuple[pd.Seri
 
 def detect_liquidity_sweeps(
     candles: pd.DataFrame,
-    lookback: int = 50,
-    threshold_atr: float = 0.5,
+    lookback: int = 400,
+    threshold_atr: float = 0.1,
     swing_lookback: int = 5,
     atr_period: int = 14,
 ) -> List[LiquiditySweep]:

@@ -57,8 +57,8 @@ FEATURE_COLUMNS: List[str] = [
     # Microstructure (5)
     "ret_1",
     "ret_5",
-    "ret_15",
-    "rolling_vol_20",
+    "vwap_dist",
+    "cvd_momentum",
     "volume_zscore",
 ]
 
@@ -258,17 +258,31 @@ def build_feature_pipeline(
     close_s = pd.Series(close)
     feats["ret_1"] = close_s.pct_change(1).fillna(0).values
     feats["ret_5"] = close_s.pct_change(5).fillna(0).values
-    feats["ret_15"] = close_s.pct_change(15).fillna(0).values
-    feats["rolling_vol_20"] = (
-        close_s.pct_change().rolling(20, min_periods=1).std().fillna(0).values
-    )
     if "volume" in candles.columns:
         vol = candles["volume"].values.astype(float)
         vol_mean = pd.Series(vol).rolling(50, min_periods=1).mean().values
         vol_std = pd.Series(vol).rolling(50, min_periods=1).std().fillna(1e-6).values
         feats["volume_zscore"] = (vol - vol_mean) / np.maximum(vol_std, 1e-6)
+        
+        # VWAP (Daily Anchored)
+        typ_price = (high + low + close) / 3
+        daily_groups = pd.Series(vol, index=candles.index).groupby(candles.index.date)
+        daily_vol = daily_groups.cumsum().values
+        daily_pv = pd.Series(typ_price * vol, index=candles.index).groupby(candles.index.date).cumsum().values
+        vwap = daily_pv / np.maximum(daily_vol, 1e-6)
+        feats["vwap_dist"] = (close - vwap) / np.maximum(atr_vals, 1e-6)
+        
+        # CVD (Cumulative Volume Delta) Approximation
+        buy_pct = (close - low) / np.maximum(rng, 1e-6)
+        sell_pct = (high - close) / np.maximum(rng, 1e-6)
+        delta = (buy_pct - sell_pct) * vol
+        cvd_mom = pd.Series(delta).rolling(10, min_periods=1).sum().values
+        cvd_std = pd.Series(delta).rolling(50, min_periods=1).std().fillna(1e-6).values
+        feats["cvd_momentum"] = cvd_mom / np.maximum(cvd_std, 1e-6)
     else:
         feats["volume_zscore"] = 0.0
+        feats["vwap_dist"] = 0.0
+        feats["cvd_momentum"] = 0.0
 
     # Order columns canonically and ensure no NaNs / infs.
     feats = feats[FEATURE_COLUMNS].copy()

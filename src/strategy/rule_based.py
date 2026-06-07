@@ -112,7 +112,7 @@ def generate_signals(
     detections: Dict[str, object],
     risk_config: dict,
     proximity_atr: float = 0.5,
-    sweep_to_fvg_max_bars: int = 6,
+    sweep_to_fvg_max_bars: int = 15,
 ) -> List[Signal]:
     """Walk the bars and generate rule-based signals.
 
@@ -220,59 +220,57 @@ def generate_signals(
                 signals.append(sig)
                 break
 
-    # Setup 2: Order block mitigation with 1-bar displacement confirmation.
-    # We do NOT enter on the exact mitigation bar — we wait for the next bar
-    # to close in the OB direction, confirming a reaction rather than a pierce-through.
+    # Setup 2: Order block mitigation with up to 8 bars of consolidation before confirmation.
     for ob in obs:
         if ob.mitigation_index is None:
             continue
-        confirm_i = ob.mitigation_index + 1   # confirmation bar
-        if confirm_i >= n:
-            continue
-        bias = _structure_bias(bos, choch, confirm_i)
-        # Trade only with structure
-        if ob.direction == "bullish" and bias != "long":
-            continue
-        if ob.direction == "bearish" and bias != "short":
-            continue
-        cur_atr = atr[confirm_i] if np.isfinite(atr[confirm_i]) else 0.0
-        if cur_atr <= 0:
-            continue
-        if ob.direction == "bullish":
-            # Confirmation: close above OB bottom (price rejected lower)
-            if close[confirm_i] < ob.bottom:
+        # Look for a valid confirmation bar within 8 bars after mitigation
+        for confirm_i in range(ob.mitigation_index + 1, min(n, ob.mitigation_index + 8)):
+            bias = _structure_bias(bos, choch, confirm_i)
+            # Trade only with structure
+            if ob.direction == "bullish" and bias != "long":
                 continue
-            entry = float(close[confirm_i])
-            sl = float(ob.bottom - sl_mult * cur_atr)
-            risk = entry - sl
-            if risk <= 0:
+            if ob.direction == "bearish" and bias != "short":
                 continue
-            tp = float(entry + rr * risk)
-            direction = "long"
-        else:
-            # Confirmation: close below OB top (price rejected higher)
-            if close[confirm_i] > ob.top:
+            cur_atr = atr[confirm_i] if np.isfinite(atr[confirm_i]) else 0.0
+            if cur_atr <= 0:
                 continue
-            entry = float(close[confirm_i])
-            sl = float(ob.top + sl_mult * cur_atr)
-            risk = sl - entry
-            if risk <= 0:
-                continue
-            tp = float(entry - rr * risk)
-            direction = "short"
-        sig = Signal(
-            index=confirm_i,
-            timestamp=candles.index[confirm_i],
-            direction=direction,
-            entry=entry,
-            stop_loss=sl,
-            take_profit=tp,
-            setup_type="ob_mitigation",
-            rationale=f"{ob.direction} OB@{ob.index} mitigated+confirmed@{confirm_i}",
-            risk_atr=float(risk / cur_atr),
-        )
-        sig.score = _score_signal(sig, ob_strength=ob.strength)
-        signals.append(sig)
+            if ob.direction == "bullish":
+                # Confirmation: close above OB bottom (price rejected lower)
+                if close[confirm_i] < ob.bottom:
+                    continue
+                entry = float(close[confirm_i])
+                sl = float(ob.bottom - sl_mult * cur_atr)
+                risk = entry - sl
+                if risk <= 0:
+                    continue
+                tp = float(entry + rr * risk)
+                direction = "long"
+            else:
+                # Confirmation: close below OB top (price rejected higher)
+                if close[confirm_i] > ob.top:
+                    continue
+                entry = float(close[confirm_i])
+                sl = float(ob.top + sl_mult * cur_atr)
+                risk = sl - entry
+                if risk <= 0:
+                    continue
+                tp = float(entry - rr * risk)
+                direction = "short"
+            sig = Signal(
+                index=confirm_i,
+                timestamp=candles.index[confirm_i],
+                direction=direction,
+                entry=entry,
+                stop_loss=sl,
+                take_profit=tp,
+                setup_type="ob_mitigation",
+                rationale=f"{ob.direction} OB@{ob.index} mitigated+confirmed@{confirm_i}",
+                risk_atr=float(risk / cur_atr),
+            )
+            sig.score = _score_signal(sig, ob_strength=ob.strength)
+            signals.append(sig)
+            break
 
     # --- Killzone filter: drop signals outside high-probability windows ----
     if killzone_only and signals:

@@ -282,38 +282,89 @@ def api_data_download():
     symbols   = body.get("symbols",   strat.get("symbols", ["EURUSD"]))
     timeframe = body.get("timeframe", strat.get("default_timeframe", "M15"))
     bars      = int(body.get("bars", 200_000))
-    data_years = int(body.get("data_years", 3))
+    data_years = int(body.get("data_years", 5))
 
     def _run():
         import logging as _log
-        results = {}
+        import pandas as _pd
+        from src.utils.data_loader import load_from_yfinance, load_from_mt5, load_csv
+
+        # Only H4 and D1 have enough Yahoo Finance history to be a useful fallback.
+        # All intraday timeframes (M1–H1) REQUIRE MT5 for meaningful history.
+        YF_FALLBACK_TF  = {"H4": ("4h", "730d"), "D1": ("1d", "max")}
+        is_intraday = timeframe.upper() not in YF_FALLBACK_TF
+
         mt5 = _get_mt5()
+
+        # ── Gate: MT5 required for all intraday timeframes ───────────────────
+        if is_intraday and not mt5.connected:
+            msg = (
+                f"MT5 is not connected — {timeframe} data requires MetaTrader 5. "
+                "To fix: (1) Open MetaTrader 5. (2) Log into your broker account. "
+                "(3) Enable 'Allow Algorithmic Trading' (robot icon in toolbar). "
+                "(4) Come back here, open Setup > MT5, and click Connect."
+            )
+            _log.getLogger().error("MT5 not connected. %s data requires MetaTrader 5.", timeframe)
+            return {sym: {"bars": 0, "source": "MT5 required", "error": msg} for sym in symbols}
+
+        # ── Per-symbol download loop ─────────────────────────────────────────
+        results = {}
         for symbol in symbols:
-            _log.getLogger().info("Downloading %s %s (%d yr / up to %d bars)…",
-                                  symbol, timeframe, data_years, bars)
+            source_label = "MT5" if mt5.connected else "yfinance"
+            _log.getLogger().info(
+                "Downloading %s %s (%d yr / up to %d bars) via %s...",
+                symbol, timeframe, data_years, bars, source_label,
+            )
             try:
+                cache = DATA_DIR / f"{symbol}_{timeframe}.csv"
+                df_existing = None
+                if cache.exists():
+                    try:
+                        df_existing = load_csv(str(cache))
+                    except Exception:
+                        df_existing = None
+
+                # Primary: MT5
                 if mt5.connected:
-                    df = mt5.fetch_rates(symbol, timeframe, bars, from_pos=1)
+                    df = load_from_mt5(symbol, timeframe, bars)
                     source = "MT5"
+
+                # Fallback: yfinance for H4 / D1 only
                 else:
-                    from src.utils.data_loader import load_from_yfinance
-                    tf_map = {"M1":"1m","M5":"5m","M15":"15m","M30":"30m","H1":"1h","D1":"1d"}
-                    interval = tf_map.get(timeframe.upper(), "15m")
-                    period = f"{data_years * 365}d"
+                    interval, period = YF_FALLBACK_TF[timeframe.upper()]
                     df = load_from_yfinance(symbol, period=period, interval=interval)
                     source = "yfinance"
+                    # Merge new bars into existing cache to accumulate history
+                    if df_existing is not None and not df_existing.empty \
+                            and df is not None and not df.empty:
+                        new_only = df[df.index > df_existing.index[-1]]
+                        if not new_only.empty:
+                            df = _pd.concat([df_existing, new_only]).sort_index()
+                            _log.getLogger().info(
+                                "%s: appended %d new bars (total %d)",
+                                symbol, len(new_only), len(df),
+                            )
+                        else:
+                            df = df_existing
+                            source = "cache (already up-to-date)"
 
+                # Handle empty result
                 if df is None or df.empty:
-                    _log.getLogger().warning("%s: no data returned", symbol)
-                    results[symbol] = {"bars": 0, "source": source, "error": "no data"}
+                    _log.getLogger().warning("%s: no data returned from %s", symbol, source)
+                    if df_existing is not None and not df_existing.empty:
+                        results[symbol] = {"bars": len(df_existing), "source": "cache (no new data)"}
+                    else:
+                        results[symbol] = {"bars": 0, "source": source,
+                                           "error": f"No data returned for {symbol} {timeframe}."}
                     continue
 
-                cache = DATA_DIR / f"{symbol}_{timeframe}.csv"
+                # Save to cache
                 DATA_DIR.mkdir(parents=True, exist_ok=True)
                 df.to_csv(cache, index_label="time")
                 n = len(df)
                 _log.getLogger().info("%s: saved %d bars from %s", symbol, n, source)
                 results[symbol] = {"bars": n, "source": source}
+
             except Exception as e:
                 _log.getLogger().error("%s download failed: %s", symbol, e)
                 results[symbol] = {"bars": 0, "source": "error", "error": str(e)}
@@ -550,6 +601,8 @@ def api_train_all():
                 candles = candles[candles.index >= cutoff]
                 detections = _detect(candles, det_cfg)
                 combined_cfg = {**risk_cfg, **strat_cfg}
+                # Force killzone_only to False during training so the ML model learns from all patterns
+                combined_cfg["killzone_only"] = False
                 signals = generate_signals(candles, detections, combined_cfg)
                 setups = signals_to_setups(signals)
                 if len(setups) < 30:

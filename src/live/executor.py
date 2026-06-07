@@ -207,7 +207,7 @@ class LiveExecutor:
         # --- Sentiment / news blackout gate ---
         now = datetime.utcnow()
         blocked, reason = self._sentiment.is_trade_blocked(now, symbol)
-        if not blocked:
+        if blocked:
             logger.info("News blackout [%s]: %s", symbol, reason)
             return
 
@@ -282,9 +282,22 @@ class LiveExecutor:
 
         # --- Adaptive position sizing ---
         risk_mult = self.risk_mgr.adaptive_risk_multiplier(now, in_killzone=in_kz)
+        
+        # Apply ML Sentiment Multiplier if it's a pure ML trade
+        if passes_ml:
+            max_sentiment_mult = float(self.strategy_cfg.get("intuition_mode", {}).get("max_risk_multiplier", 2.0))
+            sentiment_score = sentiment_result.score
+            if sig.direction == "long" and sentiment_score >= 0.8:
+                risk_mult *= max_sentiment_mult
+                logger.info("[%s] Extreme Bullish Sentiment! Doubling ML trade risk multiplier.", symbol)
+            elif sig.direction == "short" and sentiment_score <= -0.8:
+                risk_mult *= max_sentiment_mult
+                logger.info("[%s] Extreme Bearish Sentiment! Doubling ML trade risk multiplier.", symbol)
+
         # Apply intuition risk multiplier on top (capped by config).
         if intuition_result is not None:
             risk_mult *= intuition_result.risk_multiplier
+            
         # Apply pre-event warning reduction (50% risk).
         if pre_event:
             risk_mult *= 0.5

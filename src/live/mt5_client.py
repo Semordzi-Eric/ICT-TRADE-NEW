@@ -90,6 +90,16 @@ class MT5Client:
         """Fetch the latest ``count`` bars; returns an OHLCV DataFrame."""
         if not HAS_MT5 or not self.connected:
             raise RuntimeError("MT5 not connected")
+
+        # Ensure symbol is selected in Market Watch so data fetch doesn't fail
+        mt5.symbol_select(symbol, True)
+
+        # Ensure we don't ask for more bars than the terminal's allowed maximum
+        maxbars = mt5.terminal_info().maxbars
+        if count > maxbars:
+            logger.warning("Requested %d bars for %s but MT5 maxbars is %d. Capping request.", count, symbol, maxbars)
+            count = maxbars
+
         rates = mt5.copy_rates_from_pos(symbol, _tf(timeframe), from_pos, count)
         if rates is None or len(rates) == 0:
             return pd.DataFrame()

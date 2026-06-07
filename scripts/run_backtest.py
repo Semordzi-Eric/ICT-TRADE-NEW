@@ -117,7 +117,7 @@ def aggregate(per_symbol: Dict[str, dict]) -> dict:
     avg_sharpe   = sum(m.get("sharpe", 0) for m in per_symbol.values()) / len(per_symbol)
     avg_pf       = sum(m.get("profit_factor", 0) for m in per_symbol.values()) / len(per_symbol)
     total_net    = sum(m.get("net_pnl", 0) for m in per_symbol.values())
-    worst_dd     = min(m.get("max_drawdown", 0) for m in per_symbol.values())
+    worst_dd     = min(m.get("max_drawdown_pct", 0) for m in per_symbol.values())
     return {
         "symbols":           len(per_symbol),
         "total_trades":      total_trades,
@@ -125,7 +125,7 @@ def aggregate(per_symbol: Dict[str, dict]) -> dict:
         "avg_sharpe":        avg_sharpe,
         "avg_profit_factor": avg_pf,
         "summed_net_pnl":    total_net,
-        "worst_max_dd":      worst_dd,
+        "worst_max_dd_pct":  worst_dd,
     }
 
 

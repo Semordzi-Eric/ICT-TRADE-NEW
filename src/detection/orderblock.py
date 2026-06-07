@@ -32,10 +32,10 @@ class OrderBlock:
 
 def detect_order_blocks(
     candles: pd.DataFrame,
-    min_move_atr: float = 1.5,
-    lookback: int = 100,
+    min_move_atr: float = 1.0,
+    lookback: Optional[int] = None,
     atr_period: int = 14,
-    displacement_bars: int = 3,
+    displacement_bars: int = 4,
     track_mitigation: bool = True,
 ) -> List[OrderBlock]:
     """Identify order blocks created by displacement moves.
@@ -44,7 +44,7 @@ def detect_order_blocks(
         candles: OHLC DataFrame.
         min_move_atr: required displacement (close-to-close over `displacement_bars`)
             in ATR units.
-        lookback: max bars retained when scanning history.
+        lookback: max blocks retained when scanning history (None for all).
         atr_period: ATR smoothing period.
         displacement_bars: number of bars over which to measure displacement.
         track_mitigation: if True, mark an OB as mitigated when price
@@ -108,8 +108,8 @@ def detect_order_blocks(
                 )
             )
 
-    # Trim to most recent `lookback` blocks
-    if len(blocks) > lookback:
+    # Trim to most recent `lookback` blocks if specified
+    if lookback is not None and len(blocks) > lookback:
         blocks = blocks[-lookback:]
 
     if track_mitigation:
