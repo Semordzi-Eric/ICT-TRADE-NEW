@@ -159,15 +159,19 @@ def build_feature_pipeline(
     def _calc_nearest(eq_list, out_array, swing_lookback=5):
         if not eq_list:
             return
-        eq_list = sorted(eq_list, key=lambda x: max(x.indices))
-        active_levels = []
-        eq_idx = 0
+        
+        activation_indices = np.array([max(eq.indices) + swing_lookback for eq in eq_list])
+        levels = np.array([eq.level for eq in eq_list])
+        
+        sort_idx = np.argsort(activation_indices)
+        activation_indices = activation_indices[sort_idx]
+        levels = levels[sort_idx]
+        
         for i in range(n):
-            while eq_idx < len(eq_list) and max(eq_list[eq_idx].indices) + swing_lookback <= i:
-                active_levels.append(eq_list[eq_idx].level)
-                eq_idx += 1
-            if active_levels:
-                out_array[i] = min(abs(close[i] - lv) for lv in active_levels) / atr_safe[i]
+            num_active = np.searchsorted(activation_indices, i, side='right')
+            if num_active > 0:
+                active_levels = levels[:num_active]
+                out_array[i] = np.min(np.abs(active_levels - close[i])) / atr_safe[i]
 
     nearest_eqh = np.full(n, 10.0)
     nearest_eql = np.full(n, 10.0)

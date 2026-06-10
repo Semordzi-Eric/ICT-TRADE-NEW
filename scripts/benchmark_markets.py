@@ -169,11 +169,11 @@ def _benchmark_symbol(symbol, strategy_cfg, risk_cfg, det_cfg, registry):
     auc = registry.champion_auc(symbol)
     return {
         "symbol":      symbol,
-        "n_trades":    int(metrics.get("trades", 0)),
+        "n_trades":    int(metrics.get("n_trades", 0)),
         "win_rate":    round(float(metrics.get("win_rate", 0)), 4),
         "profit_factor": round(float(metrics.get("profit_factor", 0)), 4),
         "sharpe":      round(float(metrics.get("sharpe", 0)), 4),
-        "max_dd":      round(float(metrics.get("max_drawdown", 0)), 4),
+        "max_dd":      round(float(metrics.get("max_drawdown_pct", 0)), 4),
         "net_pnl":     round(float(metrics.get("net_pnl", 0)), 2),
         "champion_auc": round(auc, 4) if auc is not None else None,
         "drift_alert": auc is not None and auc < 0.55,

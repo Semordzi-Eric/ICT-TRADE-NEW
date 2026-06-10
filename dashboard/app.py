@@ -686,11 +686,11 @@ def api_benchmark():
                 auc = _registry.champion_auc(symbol)
                 rows.append({
                     "symbol":        symbol,
-                    "n_trades":      int(m.get("trades", 0)),
+                    "n_trades":      int(m.get("n_trades", 0)),
                     "win_rate":      round(float(m.get("win_rate", 0)), 4),
                     "profit_factor": round(float(m.get("profit_factor", 0)), 4),
                     "sharpe":        round(float(m.get("sharpe", 0)), 4),
-                    "max_dd":        round(float(m.get("max_drawdown", 0)), 4),
+                    "max_dd":        round(float(m.get("max_drawdown_pct", 0)), 4),
                     "net_pnl":       round(float(m.get("net_pnl", 0)), 2),
                     "champion_auc":  round(auc, 4) if auc is not None else None,
                     "model_used":    model is not None,
@@ -704,6 +704,22 @@ def api_benchmark():
                 rows.append({"symbol": symbol, "error": str(e)})
 
         rows.sort(key=lambda r: r.get("sharpe", -999), reverse=True)
+        
+        # Save results to file
+        try:
+            import json
+            from datetime import datetime
+            from pathlib import Path
+            
+            logs_dir = Path("logs")
+            logs_dir.mkdir(exist_ok=True)
+            date_str = datetime.utcnow().strftime("%Y%m%d_%H%M")
+            out_path = logs_dir / f"market_benchmark_{date_str}.json"
+            out_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+            _log.getLogger().info("Saved benchmark results to %s", out_path)
+        except Exception as e:
+            _log.getLogger().error("Failed to save benchmark results: %s", e)
+
         return {"leaderboard": rows}
 
     return Response(_stream_job(_run), mimetype="text/event-stream",

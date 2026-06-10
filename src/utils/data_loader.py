@@ -64,7 +64,7 @@ def load_csv(
             if c.lower() in ("time", "timestamp", "date", "datetime"):
                 parse_dates_col = c
                 break
-    df[parse_dates_col] = pd.to_datetime(df[parse_dates_col])
+    df[parse_dates_col] = pd.to_datetime(df[parse_dates_col], format="mixed")
     df = df.set_index(parse_dates_col).sort_index()
     df = df.rename(columns={c: c.lower() for c in df.columns})
     if "tick_volume" in df.columns and "volume" not in df.columns:

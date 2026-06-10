@@ -169,7 +169,7 @@ def train_walk_forward(
     oof_preds_lstm: list = []
     oof_y: list = []
 
-    purge_bars = int(wf_cfg.get("purge_bars", 5))
+    purge_bars = int(wf_cfg.get("purge_bars", 24))
 
     for k, (ts_train, ts_train_end, ts_val_end, ts_test_end) in enumerate(splits):
         logger.info("Fold %d: train [%s..%s] val [%s..%s] test [%s..%s]",

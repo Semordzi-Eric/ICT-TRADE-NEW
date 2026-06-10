@@ -18,6 +18,7 @@ Key upgrades over v1:
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, time as dt_time
@@ -123,6 +124,7 @@ class LiveExecutor:
 
         # Per-symbol state.
         self._last_bar_time: Dict[str, pd.Timestamp] = {}
+        self._positions_lock = threading.Lock()
         self._bot_positions: Dict[int, dict] = {}
 
         # Contract values (from risk_cfg).
@@ -327,14 +329,15 @@ class LiveExecutor:
         )
         if result is not None:
             ticket = int(result.get("order", 0))
-            self._bot_positions[ticket] = {
-                "symbol": symbol,
-                "entry":  sig.entry,
-                "stop_loss": sig.stop_loss,
-                "direction": sig.direction,
-                "contract_value": contract_value,
-                "intuition": intuition_result is not None,
-            }
+            with self._positions_lock:
+                self._bot_positions[ticket] = {
+                    "symbol": symbol,
+                    "entry":  sig.entry,
+                    "stop_loss": sig.stop_loss,
+                    "direction": sig.direction,
+                    "contract_value": contract_value,
+                    "intuition": intuition_result is not None,
+                }
             self.risk_mgr.register_open(symbol)
             logger.info("[%s] Order placed ticket=%d action=%s vol=%.4f %s",
                         symbol, ticket, action, vol,
@@ -460,17 +463,25 @@ class LiveExecutor:
     # ------------------------------------------------------------------ #
 
     def _check_closed_positions(self) -> None:
-        if not self._bot_positions:
-            return
+        with self._positions_lock:
+            if not self._bot_positions:
+                return
+            bot_pos_keys = list(self._bot_positions.keys())
+            
         try:
             open_positions = self.mt5.get_positions()
         except Exception:
             return
+            
         current_tickets = {int(p.get("ticket", 0)) for p in open_positions}
-        closed_tickets = [t for t in list(self._bot_positions.keys())
-                          if t not in current_tickets]
+        closed_tickets = [t for t in bot_pos_keys if t not in current_tickets]
+        
         for ticket in closed_tickets:
-            info = self._bot_positions.pop(ticket)
+            with self._positions_lock:
+                if ticket not in self._bot_positions:
+                    continue
+                info = self._bot_positions.pop(ticket)
+                
             profit = self.mt5.get_deal_profit(ticket, lookback_days=self._deal_lookback_days)
             if profit is None:
                 profit = 0.0

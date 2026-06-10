@@ -51,8 +51,8 @@ class TestSentimentEngine:
 
     def test_is_trade_blocked_no_events(self, tmp_path):
         engine = self._engine(tmp_path)
-        ok, msg = engine.is_trade_blocked(datetime.utcnow(), "EURUSD")
-        assert ok is True
+        blocked, msg = engine.is_trade_blocked(datetime.utcnow(), "EURUSD")
+        assert blocked is False
         assert msg == "ok"
 
     def test_is_trade_blocked_with_high_impact(self, tmp_path):
@@ -67,8 +67,8 @@ class TestSentimentEngine:
                 "impact": "High",
                 "dt": event_dt.isoformat(),
             }]
-        ok, msg = engine.is_trade_blocked(now, "EURUSD")
-        assert ok is False
+        blocked, msg = engine.is_trade_blocked(now, "EURUSD")
+        assert blocked is True
         assert "FOMC" in msg
 
     def test_is_trade_not_blocked_different_currency(self, tmp_path):
@@ -82,8 +82,8 @@ class TestSentimentEngine:
                 "impact": "High",
                 "dt": event_dt.isoformat(),
             }]
-        ok, _ = engine.is_trade_blocked(now, "EURUSD")
-        assert ok is True
+        blocked, _ = engine.is_trade_blocked(now, "EURUSD")
+        assert blocked is False
 
     def test_pre_event_warning(self, tmp_path):
         engine = self._engine(tmp_path)

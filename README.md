@@ -4,7 +4,7 @@
 
 ---
 
-## 🚀 Web Dashboard
+##  Web Dashboard
 
 Everything you need is accessible from the browser — no CLI required.
 

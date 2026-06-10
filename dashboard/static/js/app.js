@@ -188,7 +188,6 @@ function navigateTo(pageId) {
   $('page-sub').textContent = sub;
 
   // Lazy-load page data
-  const loaders = { overview, sentiment, data:dataPage, registry };
   if(Pages[pageId]&&Pages[pageId].load) Pages[pageId].load();
 }
 

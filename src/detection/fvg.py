@@ -96,15 +96,21 @@ def detect_fvg(
 
     if track_mitigation:
         for z in zones:
-            for j in range(z.index + 1, n):
-                if z.direction == "bullish" and low[j] <= z.bottom:
+            start_mitigation = z.index + 1
+            if start_mitigation >= n:
+                continue
+            if z.direction == "bullish":
+                window = low[start_mitigation:]
+                mask = window <= z.bottom
+                if mask.any():
                     z.mitigated = True
-                    z.mitigation_index = j
-                    break
-                if z.direction == "bearish" and high[j] >= z.top:
+                    z.mitigation_index = start_mitigation + int(np.argmax(mask))
+            elif z.direction == "bearish":
+                window = high[start_mitigation:]
+                mask = window >= z.top
+                if mask.any():
                     z.mitigated = True
-                    z.mitigation_index = j
-                    break
+                    z.mitigation_index = start_mitigation + int(np.argmax(mask))
     return zones
 
 

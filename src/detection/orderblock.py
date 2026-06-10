@@ -114,16 +114,21 @@ def detect_order_blocks(
 
     if track_mitigation:
         for ob in blocks:
-            start_mitigation = ob.index + displacement_bars
-            for j in range(start_mitigation + 1, n):
-                if ob.direction == "bullish" and low[j] <= ob.bottom:
+            start_mitigation = ob.index + displacement_bars + 1
+            if start_mitigation >= n:
+                continue
+            if ob.direction == "bullish":
+                window = low[start_mitigation:]
+                mask = window <= ob.bottom
+                if mask.any():
                     ob.mitigated = True
-                    ob.mitigation_index = j
-                    break
-                if ob.direction == "bearish" and high[j] >= ob.top:
+                    ob.mitigation_index = start_mitigation + int(np.argmax(mask))
+            elif ob.direction == "bearish":
+                window = high[start_mitigation:]
+                mask = window >= ob.top
+                if mask.any():
                     ob.mitigated = True
-                    ob.mitigation_index = j
-                    break
+                    ob.mitigation_index = start_mitigation + int(np.argmax(mask))
     return blocks
 
 

@@ -134,7 +134,9 @@ def detect_liquidity_sweeps(
             continue
 
         # Bearish sweep: high pierces a recent swing high, close back below it.
-        recent_sh = sh_idx[(sh_idx >= i - lookback) & (sh_idx < i)]
+        left_sh = np.searchsorted(sh_idx, i - lookback)
+        right_sh = np.searchsorted(sh_idx, i)
+        recent_sh = sh_idx[left_sh:right_sh]
         if recent_sh.size:
             level = high[recent_sh].max()
             if high[i] > level and close[i] < level:
@@ -153,7 +155,9 @@ def detect_liquidity_sweeps(
                     )
 
         # Bullish sweep: low pierces a recent swing low, close back above it.
-        recent_sl = sl_idx[(sl_idx >= i - lookback) & (sl_idx < i)]
+        left_sl = np.searchsorted(sl_idx, i - lookback)
+        right_sl = np.searchsorted(sl_idx, i)
+        recent_sl = sl_idx[left_sl:right_sl]
         if recent_sl.size:
             level = low[recent_sl].min()
             if low[i] < level and close[i] > level:

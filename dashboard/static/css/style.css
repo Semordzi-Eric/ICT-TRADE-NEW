@@ -247,7 +247,7 @@ button { cursor: pointer; font-family: var(--font); }
 }
 .btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--bg-surface);
 }
 .btn-primary:hover { background: #374151; }
 .btn-success { background: var(--bg-surface); color: var(--accent-green); border-color: var(--border); }
@@ -307,7 +307,7 @@ select.form-control { appearance: auto; }
   background: var(--border); border-radius: 20px;
   cursor: pointer; transition: background 0.1s;
 }
-.toggle.on { background: var(--accent); }
+.toggle.on { background: var(--accent-blue); }
 .toggle::after {
   content: ''; position: absolute; top: 2px; left: 2px;
   width: 16px; height: 16px; border-radius: 50%;
@@ -519,4 +519,13 @@ canvas.equity-canvas { width: 100% !important; height: 100% !important; }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   #header { padding: 0 16px; }
   .page { padding: 16px; }
+}
+
+/* ── Utilities ─────────────────────────────────────────────────────────── */
+@keyframes spin {
+  100% { transform: rotate(360deg); }
+}
+.spin {
+  display: inline-block;
+  animation: spin 1s linear infinite;
 }
