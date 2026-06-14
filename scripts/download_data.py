@@ -29,8 +29,10 @@ Usage
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -284,6 +286,10 @@ def main() -> None:
         "--log-level", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
+    parser.add_argument(
+        "--workers", type=int, default=0,
+        help="Max parallel download threads (default: auto = min(32, symbols × timeframes))",
+    )
     args = parser.parse_args()
 
     setup_logging(args.log_level)
@@ -311,26 +317,53 @@ def main() -> None:
     print(f"  Mode      : {'FORCE RE-DOWNLOAD' if args.force else 'incremental refresh'}")
     print("=" * 70 + "\n")
 
-    # ---- Download loop ------------------------------------------------------
-    results = []  # (symbol, tf, status, bars, date_range, source)
-    t0 = time.time()
-
+    # ---- Download loop (parallel) -------------------------------------------
+    # Downloads are network/I-O bound → ThreadPoolExecutor gives full concurrency
+    # without spawning separate processes.
+    tasks = []
     for sym in symbols:
         years = market_cfg.get(sym, {}).get("training_start_years", 5)
         for tf in timeframes:
+            tasks.append((sym, tf, years))
+
+    max_workers = args.workers if args.workers > 0 else min(32, len(tasks))
+    max_workers = max(1, max_workers)
+    logger.info("Starting %d download tasks with %d worker thread(s)",
+                len(tasks), max_workers)
+
+    # We keep an ordered dict so the summary prints in symbol→timeframe order.
+    result_map: Dict[tuple, tuple] = {}
+    t0 = time.time()
+
+    def _worker(sym, tf, years):
+        return download_symbol(
+            symbol=sym,
+            timeframe=tf,
+            cache_dir=cache_dir,
+            years=years,
+            force=args.force,
+            quiet=args.quiet,
+        )
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_key = {
+            pool.submit(_worker, sym, tf, years): (sym, tf)
+            for sym, tf, years in tasks
+        }
+        for future in as_completed(future_to_key):
+            sym, tf = future_to_key[future]
             try:
-                status, bars, date_range, source = download_symbol(
-                    symbol=sym,
-                    timeframe=tf,
-                    cache_dir=cache_dir,
-                    years=years,
-                    force=args.force,
-                    quiet=args.quiet,
-                )
+                status, bars, date_range, source = future.result()
             except Exception as exc:
                 logger.exception("Unexpected error for %s %s: %s", sym, tf, exc)
                 status, bars, date_range, source = "error", 0, "n/a", "n/a"
-            results.append((sym, tf, status, bars, date_range, source))
+            result_map[(sym, tf)] = (status, bars, date_range, source)
+
+    # Reconstruct results in original order for the summary table.
+    results = []
+    for sym, tf, years in tasks:
+        status, bars, date_range, source = result_map[(sym, tf)]
+        results.append((sym, tf, status, bars, date_range, source))
 
     elapsed = time.time() - t0
 

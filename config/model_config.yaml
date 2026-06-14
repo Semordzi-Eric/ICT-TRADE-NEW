@@ -1,25 +1,30 @@
 model:
   lightgbm:
-    num_leaves: 31
+    num_leaves: 63
     learning_rate: 0.05
     feature_fraction: 0.8
     bagging_fraction: 0.8
     bagging_freq: 5
-    min_data_in_leaf: 50
-    n_estimators: 500
+    min_data_in_leaf: 30
+    n_estimators: 800
     objective: binary
     metric: binary_logloss
 
   xgboost:
     max_depth: 6
     learning_rate: 0.05
-    n_estimators: 500
+    n_estimators: 800
     subsample: 0.8
     colsample_bytree: 0.8
     objective: "binary:logistic"
 
+  catboost:
+    n_estimators: 800
+    learning_rate: 0.05
+    max_depth: 6
+
   lstm:
-    timesteps: 20
+    timesteps: 96            # ↑ from 20 → 96 bars = 24h on M15 (full-session context)
     units: 64
     dropout: 0.3
     learning_rate: 0.001
@@ -27,14 +32,23 @@ model:
     epochs: 50
     patience: 5
 
-  ensemble_weights: [0.5, 0.3, 0.2]   # LightGBM, XGBoost, LSTM
-  walk_forward:
-    train_months: 12
-    val_months: 3
-    test_months: 3
-    purge_bars: 5       # drop last N rows from each training fold to avoid label bleed
+  # Meta-model combines 4 base models (lgb, xgb, lstm, catboost)
+  # Now uses LightGBM meta (non-linear stacking) instead of logistic regression.
+  ensemble_weights: [0.4, 0.25, 0.15, 0.20]   # LightGBM, XGBoost, LSTM, CatBoost
 
-  retrain_frequency_days: 7
-  min_setups_for_training: 5000
+  walk_forward:
+    train_months: 24         # 24 months of training data per fold
+    val_months: 2            # 2-month validation window for early stopping
+    test_months: 2           # ↑ from 1 → 2 months — more stable AUC estimates per fold
+    purge_bars: 80           # ↑ from 40 → 80 bars (20h) — cleaner fold boundaries
+
+  # RR ratio aligned with labels.py default (1.5)
+  rr_ratio: 1.5
+
+  retrain_frequency_days: 14
+  min_setups_for_training: 500
   concept_drift_threshold_kl: 0.15
-  bayesian_iterations: 50
+  bayesian_iterations: 80           # ↑ from 30 → 80 — meaningful hyperparameter search
+
+  # Correlation pruning: drop features with pairwise corr > this threshold
+  correlation_threshold: 0.95

@@ -253,16 +253,39 @@ class IntuitiveSignalScorer:
             bd.notes.append(f"✗ Spread not tight ({spread_pips:.1f} pips) → 0")
 
         # ------------------------------------------------------------------
-        # 9. Price inside Asian session range (manipulation zone)
+        # 9. Price inside Asian session HIGH/LOW range (manipulation zone).
+        # ICT concept: during London/NY open, price entering the Asian H/L
+        # range indicates a potential manipulation / sweep setup.
+        # FIX: Previously only checked current TIME — now checks whether
+        # the current PRICE is within the Asian session's actual H/L range.
         # ------------------------------------------------------------------
         if len(candles) > 0 and isinstance(candles.index, pd.DatetimeIndex):
-            ts = candles.index[idx]
-            t = ts.time()
-            if _ASIAN_START <= t <= _ASIAN_END:
-                bd.asian_range_score = 1
-                bd.notes.append("✓ Price in Asian session range → +1")
+            current_close = candles["close"].iloc[idx]
+            today = candles.index[idx].date()
+            # Identify bars from today's Asian session (00:00–07:00 UTC).
+            asian_mask = (
+                (candles.index.date == today)
+                & (candles.index.time >= _ASIAN_START)
+                & (candles.index.time <= _ASIAN_END)
+            )
+            asian_bars = candles[asian_mask]
+            if not asian_bars.empty:
+                asian_high = asian_bars["high"].max()
+                asian_low  = asian_bars["low"].min()
+                price_in_range = asian_low <= current_close <= asian_high
+                if price_in_range:
+                    bd.asian_range_score = 1
+                    bd.notes.append(
+                        f"\u2713 Price {current_close:.5f} inside Asian range "
+                        f"[{asian_low:.5f}–{asian_high:.5f}] → +1"
+                    )
+                else:
+                    bd.notes.append(
+                        f"\u2717 Price {current_close:.5f} outside Asian range "
+                        f"[{asian_low:.5f}–{asian_high:.5f}] → 0"
+                    )
             else:
-                bd.notes.append("✗ Not in Asian session range → 0")
+                bd.notes.append("\u2717 No Asian session bars found today → 0")
 
         # ------------------------------------------------------------------
         # Total

@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List
 
@@ -107,6 +109,18 @@ def backtest_one(
     return result, metrics
 
 
+# Module-level worker wrapper (required for ProcessPoolExecutor pickling on Windows)
+def _backtest_worker(args_tuple):
+    sym, timeframe, det_cfg, risk_cfg, strat_cfg, starting_balance = args_tuple
+    try:
+        candles = load_data(sym, timeframe)
+        result, metrics = backtest_one(sym, timeframe, det_cfg, risk_cfg, strat_cfg, starting_balance)
+        return sym, result, metrics, candles
+    except Exception as exc:
+        print(f"  [{sym}] ERROR: {exc}")
+        return sym, None, None, None
+
+
 def aggregate(per_symbol: Dict[str, dict]) -> dict:
     """Combine per-symbol metrics into a portfolio-level summary."""
     if not per_symbol:
@@ -158,6 +172,8 @@ def main() -> None:
     parser.add_argument("--plot", action="store_true")
     parser.add_argument("--output", default=None,
                         help="Optional path to write metrics JSON")
+    parser.add_argument("--workers", type=int, default=0,
+                        help="Max parallel worker processes (default: auto = min(CPU, symbols))")
     args = parser.parse_args()
 
     setup_logging("INFO")
@@ -184,30 +200,60 @@ def main() -> None:
     per_symbol_candles: Dict[str, "pd.DataFrame"] = {}
     per_symbol_results = {}
 
-    for sym in symbols:
+    if len(symbols) == 1:
+        # Single-symbol: run inline (no subprocess overhead)
+        sym = symbols[0]
         print(f"--- {sym} ---")
-        # Re-load candles inside backtest_one, but also keep a reference for stats
         try:
             cand = load_data(sym, timeframe)
         except Exception as exc:
             print(f"  [{sym}] load error: {exc}")
-            continue
+            cand = None
         per_symbol_candles[sym] = cand
-
         result, metrics = backtest_one(
             sym, timeframe, det_cfg, risk_cfg, strat_cfg, args.starting_balance
         )
-        if metrics is None:
-            continue
-        per_symbol_metrics[sym] = metrics
-        per_symbol_results[sym] = result
+        if metrics is not None:
+            per_symbol_metrics[sym] = metrics
+            per_symbol_results[sym] = result
+            print(f"  trades={metrics.get('n_trades', 0)}  "
+                  f"win_rate={metrics.get('win_rate', 0):.2%}  "
+                  f"pf={metrics.get('profit_factor', 0):.2f}  "
+                  f"sharpe={metrics.get('sharpe', 0):.2f}  "
+                  f"net_pnl={metrics.get('net_pnl', 0):+,.2f}  "
+                  f"max_dd={metrics.get('max_drawdown_pct', 0):.2%}")
+    else:
+        # Multi-symbol: run all symbols in parallel with ProcessPoolExecutor
+        cpu_count = os.cpu_count() or 1
+        max_workers = args.workers if args.workers > 0 else min(cpu_count, len(symbols))
+        max_workers = max(1, max_workers)
+        print(f"Running {len(symbols)} backtests in parallel (workers={max_workers})...\n")
 
-        print(f"  trades={metrics.get('n_trades', 0)}  "
-              f"win_rate={metrics.get('win_rate', 0):.2%}  "
-              f"pf={metrics.get('profit_factor', 0):.2f}  "
-              f"sharpe={metrics.get('sharpe', 0):.2f}  "
-              f"net_pnl={metrics.get('net_pnl', 0):+,.2f}  "
-              f"max_dd={metrics.get('max_drawdown_pct', 0):.2%}")
+        worker_args = [
+            (sym, timeframe, det_cfg, risk_cfg, strat_cfg, args.starting_balance)
+            for sym in symbols
+        ]
+        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_backtest_worker, a): a[0] for a in worker_args}
+            for future in as_completed(futures):
+                orig_sym = futures[future]
+                try:
+                    sym, result, metrics, cand = future.result()
+                except Exception as exc:
+                    print(f"  [{orig_sym}] FAILED: {exc}")
+                    continue
+                print(f"--- {sym} ---")
+                per_symbol_candles[sym] = cand
+                if metrics is None:
+                    continue
+                per_symbol_metrics[sym] = metrics
+                per_symbol_results[sym] = result
+                print(f"  trades={metrics.get('n_trades', 0)}  "
+                      f"win_rate={metrics.get('win_rate', 0):.2%}  "
+                      f"pf={metrics.get('profit_factor', 0):.2f}  "
+                      f"sharpe={metrics.get('sharpe', 0):.2f}  "
+                      f"net_pnl={metrics.get('net_pnl', 0):+,.2f}  "
+                      f"max_dd={metrics.get('max_drawdown_pct', 0):.2%}")
 
     if not per_symbol_metrics:
         print("\nNo successful backtests — exiting")

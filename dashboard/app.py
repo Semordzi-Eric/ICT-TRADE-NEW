@@ -19,6 +19,8 @@ or directly:
 """
 from __future__ import annotations
 
+import collections
+import hmac
 import json
 import logging
 import os
@@ -53,14 +55,14 @@ from src.utils.sentiment_engine import SentimentEngine
 import yaml
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
-CORS(app)
+CORS(app, resources={r"/api/*": {"origins": "http://localhost:5000"}})
 
 CONFIG_DIR  = ROOT / "config"
 DATA_DIR    = ROOT / "data"
 MODELS_DIR  = ROOT / "models_artifacts"
 
 # ── Shared singletons ─────────────────────────────────────────────────────────
-_mt5: MT5Client = MT5Client()
+_mt5: MT5Client = MT5Client()  # created but NOT connected until user explicitly connects
 _mt5_lock = threading.Lock()
 
 _registry = ModelRegistry(base_dir=str(MODELS_DIR))
@@ -70,14 +72,24 @@ _sentiment_lock = threading.Lock()
 
 _live_thread: Optional[threading.Thread] = None
 _live_stop_event = threading.Event()
-_live_log: List[str] = []
+_live_log: collections.deque = collections.deque(maxlen=1000)
 _live_intuition_enabled = True
+_live_executor = None
+
+# ── YAML config cache (avoid disk reads on every API request) ─────────────────
+_yaml_cache: Dict[str, dict] = {}
+_yaml_cache_lock = threading.Lock()
+
+# ── API key authentication ────────────────────────────────────────────────────
+# Set ICT_DASHBOARD_API_KEY in your environment to protect all /api/* endpoints.
+# Omit or leave blank to disable auth (development mode only).
+_API_KEY: str = os.environ.get("ICT_DASHBOARD_API_KEY", "")
 
 
 def _get_mt5() -> MT5Client:
-    with _mt5_lock:
-        if not _mt5.connected:
-            _mt5.connect()
+    """Return the MT5 client.  Does NOT auto-connect — the user must call
+    /api/mt5/connect explicitly.  Auto-connecting without credentials would
+    silently authenticate against whatever terminal is running."""
     return _mt5
 
 
@@ -95,15 +107,38 @@ def _get_sentiment() -> SentimentEngine:
 
 
 def _load_yaml(name: str) -> dict:
-    with open(CONFIG_DIR / name) as f:
-        return yaml.safe_load(f)
+    """Load a YAML config file with in-process caching (avoids disk read per request)."""
+    with _yaml_cache_lock:
+        if name not in _yaml_cache:
+            with open(CONFIG_DIR / name) as f:
+                _yaml_cache[name] = yaml.safe_load(f)
+        return _yaml_cache[name]
+
+
+def _reload_yaml(name: str) -> dict:
+    """Force a reload of a YAML config (call after config edits)."""
+    with _yaml_cache_lock:
+        _yaml_cache.pop(name, None)
+    return _load_yaml(name)
+
+
+def _check_api_key() -> Optional["Response"]:
+    """Return a 401 Response if API key auth is enabled and the request key is wrong.
+    Returns None if auth passes.
+    """
+    if not _API_KEY:
+        return None  # auth disabled
+    key = request.headers.get("X-API-Key") or request.args.get("api_key", "")
+    if not hmac.compare_digest(key, _API_KEY):
+        return jsonify({"error": "Unauthorized"}), 401
+    return None
+
 
 
 def _load_market_cfg() -> dict:
     p = CONFIG_DIR / "market_config.yaml"
     if p.exists():
-        with open(p) as f:
-            return yaml.safe_load(f).get("markets", {})
+        return _load_yaml("market_config.yaml").get("markets", {})
     return {}
 
 
@@ -741,8 +776,10 @@ def api_sentiment():
         pre_warn = engine.pre_event_warning(now, sym)
         results.append({
             **sr.to_dict(),
-            "trade_blocked": not blocked,
-            "block_reason": reason if not blocked else "",
+            # FIX BUG-C2: was `not blocked` which inverted the flag.
+            # `blocked=True` means trading IS blocked; expose that directly.
+            "trade_blocked": blocked,
+            "block_reason": reason if blocked else "",
             "pre_event_warning": pre_warn,
         })
     upcoming = [
@@ -803,6 +840,9 @@ def api_market_overview():
 
 @app.route("/api/live/start", methods=["POST"])
 def api_live_start():
+    auth_err = _check_api_key()
+    if auth_err:
+        return auth_err
     global _live_thread, _live_intuition_enabled
     if _live_thread and _live_thread.is_alive():
         return jsonify({"status": "already_running"}), 400
@@ -823,7 +863,7 @@ def api_live_start():
             from src.live.executor import LiveExecutor
             from src.strategy.risk_manager import RiskManager
 
-            strat_cfg = _load_yaml("strategy_config.yaml")["strategy"]
+            strat_cfg = _load_yaml("strategy_config.yaml")["strategy"].copy()
             risk_cfg  = _load_yaml("risk_config.yaml")["risk"]
             det_cfg   = _load_yaml("detection_config.yaml")["detection"]
 
@@ -840,6 +880,8 @@ def api_live_start():
             _live_log.append(f"Account #{acct.get('login','?')} @ {acct.get('server','?')} — {acct.get('currency','USD')} {balance:,.2f}")
 
             rm = RiskManager(strat_cfg, risk_cfg, balance)
+
+            global _live_executor
             executor = LiveExecutor(
                 symbols=symbols, timeframe=timeframe,
                 risk_manager=rm, mt5_client=mt5_client,
@@ -847,14 +889,11 @@ def api_live_start():
                 model_artifacts_dir=str(MODELS_DIR),
                 market_config_path=str(CONFIG_DIR / "market_config.yaml"),
             )
-            while not _live_stop_event.is_set():
-                executor._check_closed_positions()
-                for sym in symbols:
-                    try:
-                        executor._tick(sym)
-                    except Exception as exc:
-                        _live_log.append(f"[{sym}] Tick error: {exc}")
-                _live_stop_event.wait(timeout=5)
+            _live_executor = executor
+            # FIX: Use executor.run() instead of manually calling _tick() in a
+            # plain loop.  run() uses the ThreadPoolExecutor, _safe_tick() error
+            # handling, and the proper reconnect logic.
+            executor.run(poll_seconds=5)
         except Exception as exc:
             _live_log.append(f"FATAL: {exc}")
         finally:
@@ -867,6 +906,9 @@ def api_live_start():
 
 @app.route("/api/live/stop", methods=["POST"])
 def api_live_stop():
+    auth_err = _check_api_key()
+    if auth_err:
+        return auth_err
     _live_stop_event.set()
     return jsonify({"status": "stopping"})
 
@@ -874,16 +916,79 @@ def api_live_stop():
 @app.route("/api/live/status")
 def api_live_status():
     running = bool(_live_thread and _live_thread.is_alive())
-    return jsonify({"running": running, "log": _live_log[-100:],
+    return jsonify({"running": running, "log": list(_live_log)[-100:],
                     "intuition_enabled": _live_intuition_enabled})
 
 
 @app.route("/api/live/intuition", methods=["POST"])
 def api_live_intuition_toggle():
-    global _live_intuition_enabled
+    global _live_intuition_enabled, _live_executor
     body = request.json or {}
     _live_intuition_enabled = bool(body.get("enabled", True))
+    if _live_executor:
+        _live_executor._intuition_enabled = _live_intuition_enabled
+        _live_executor.strategy_cfg.setdefault("intuition_mode", {})["enabled"] = _live_intuition_enabled
+        _live_log.append(f"[{datetime.utcnow().isoformat()}Z] INTUITION TOGGLE: {'ON' if _live_intuition_enabled else 'OFF'}")
     return jsonify({"intuition_enabled": _live_intuition_enabled})
+
+@app.route("/api/live/positions")
+def api_live_positions():
+    mt5 = _get_mt5()
+    if not mt5.connected:
+        return jsonify({"positions": []})
+    try:
+        positions = mt5.get_positions()
+        bot_tickets = set()
+        if _live_executor:
+            with _live_executor._positions_lock:
+                bot_tickets = set(_live_executor._bot_positions.keys())
+        pos_list = []
+        for p in positions:
+            ticket = int(p.get("ticket", 0))
+            pos_list.append({
+                "ticket": ticket,
+                "symbol": p.get("symbol", ""),
+                "type": "BUY" if p.get("type", 0) == 0 else "SELL",
+                "volume": p.get("volume", 0.0),
+                "price_open": p.get("price_open", 0.0),
+                "price_current": p.get("price_current", 0.0),
+                "profit": p.get("profit", 0.0),
+                "is_bot": ticket in bot_tickets
+            })
+        return jsonify({"positions": pos_list})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/live/panic", methods=["POST"])
+def api_live_panic():
+    auth_err = _check_api_key()
+    if auth_err:
+        return auth_err
+    global _live_thread
+    _live_stop_event.set()
+    mt5 = _get_mt5()
+    if not mt5.connected:
+        return jsonify({"status": "error", "message": "MT5 not connected"})
+
+    try:
+        positions = mt5.get_positions()
+        closed_count = 0
+        # FIX: Only close positions that were opened by the bot, not manual trades.
+        bot_tickets: set = set()
+        if _live_executor:
+            with _live_executor._positions_lock:
+                bot_tickets = set(_live_executor._bot_positions.keys())
+        for p in positions:
+            ticket = int(p.get("ticket", 0))
+            # Close all positions if no executor (full panic), else only bot's.
+            if not _live_executor or ticket in bot_tickets:
+                res = mt5.close_position(ticket)
+                if res:
+                    closed_count += 1
+        _live_log.append(f"[{datetime.utcnow().isoformat()}Z] PANIC HALT. Closed {closed_count} bot positions.")
+        return jsonify({"status": "panic_ok", "closed": closed_count})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 # ── Models (legacy list) ──────────────────────────────────────────────────────

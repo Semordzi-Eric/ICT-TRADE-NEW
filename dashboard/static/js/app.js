@@ -575,7 +575,10 @@ Pages.live = {
     await fetch('/api/live/stop',{method:'POST'});
   },
   async pollStatus() {
-    const d = await fetch('/api/live/status').then(r=>r.json()).catch(()=>({running:false,log:[]}));
+    const [d, p] = await Promise.all([
+      fetch('/api/live/status').then(r=>r.json()).catch(()=>({running:false,log:[]})),
+      fetch('/api/live/positions').then(r=>r.json()).catch(()=>({positions:[]}))
+    ]);
     State.liveRunning = d.running;
     const badge = $('live-badge');
     const badgeText = $('live-badge-text');
@@ -597,13 +600,57 @@ Pages.live = {
         if(prevLen===0) console.innerHTML='';
         for(let i=prevLen;i<log.length;i++) {
           const msg=log[i]||'';
-          const level=msg.includes('ERROR')||msg.includes('FATAL')?'error':msg.includes('INTUITION')?'ok':'info';
+          const level=msg.includes('ERROR')||msg.includes('FATAL')||msg.includes('PANIC')?'error':msg.includes('INTUITION')?'ok':'info';
           logAppend('live-log-console',msg,level);
         }
         console.dataset.len=log.length;
       }
     }
+    
+    // Update Positions
+    Pages.live.renderPositions(p.positions || []);
+
     if(State.liveRunning) setTimeout(()=>Pages.live.pollStatus(), 3000);
+  },
+  renderPositions(positions) {
+    const tbody = $('live-positions-body');
+    const pnlEl = $('live-pnl');
+    if(!tbody || !pnlEl) return;
+    if(!positions.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px">No open positions</td></tr>';
+      pnlEl.textContent = '$0.00';
+      pnlEl.style.color = 'var(--text-1)';
+      return;
+    }
+    let totalPnl = 0;
+    const rows = positions.map(pos => {
+      totalPnl += pos.profit;
+      const profitStr = fmt.pnl(pos.profit);
+      const colorCls = pos.profit >= 0 ? 'bull' : 'bear';
+      const botTag = pos.is_bot ? '<span class="tag tag-purple" style="margin-left:8px">Bot</span>' : '';
+      return `<tr>
+        <td>#${pos.ticket}</td>
+        <td><strong>${pos.symbol}</strong>${botTag}</td>
+        <td><span class="tag ${pos.type==='BUY'?'tag-green':'tag-red'}">${pos.type}</span></td>
+        <td>${pos.volume.toFixed(2)}</td>
+        <td style="font-family:var(--font-mono)">${pos.price_open.toFixed(5)}</td>
+        <td style="font-family:var(--font-mono)">${pos.price_current.toFixed(5)}</td>
+        <td style="font-family:var(--font-mono)" class="${colorCls}">${profitStr}</td>
+      </tr>`;
+    });
+    tbody.innerHTML = rows.join('');
+    pnlEl.textContent = fmt.pnl(totalPnl);
+    pnlEl.style.color = totalPnl >= 0 ? 'var(--accent-green)' : 'var(--danger)';
+  },
+  async panic() {
+    if(!confirm("🚨 EMERGENGY HALT\\n\\nThis will stop the trading loop and immediately CLOSE ALL open MT5 positions. Are you absolutely sure?")) return;
+    const r = await fetch('/api/live/panic', {method:'POST'}).then(r=>r.json()).catch(()=>({}));
+    if(r.status === 'panic_ok') {
+      alert(`Panic executed. Closed ${r.closed} positions.`);
+      Pages.live.pollStatus(); // force refresh
+    } else {
+      alert('Panic failed: ' + (r.message || 'Unknown error'));
+    }
   },
   clearLog() { $('live-log-console').innerHTML=''; $('live-log-console').dataset.len=0; },
   toggleIntuition() {

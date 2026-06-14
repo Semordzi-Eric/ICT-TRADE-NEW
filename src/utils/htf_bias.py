@@ -116,8 +116,24 @@ class HTFBiasCache:
     # ------------------------------------------------------------------
 
     def _maybe_refresh(self) -> None:
-        """Refresh only when a new H4 bar has closed."""
+        """Refresh only when a new H4 bar has closed.
+
+        BUG-M2 FIX: Previously the MT5 fetch was executed on *every* call,
+        adding 16 unnecessary network round-trips per 5-second poll cycle.
+        Now we gate the fetch behind a time check: we only query MT5 if at
+        least ``_SECONDS_PER_H4_BAR`` seconds have elapsed since the last
+        successful fetch.  The bar-time guard still short-circuits computation
+        if the same H4 bar has not yet closed.
+        """
+        import time as _time
+        now_ts = _time.monotonic()
+        last_fetch_mono = getattr(self, "_last_fetch_mono", 0.0)
+        # Only hit MT5 if enough time has passed for a new H4 bar to close.
+        if now_ts - last_fetch_mono < _SECONDS_PER_H4_BAR:
+            return  # cached bias still valid within this H4 bar window
+
         candles = self._mt5.fetch_rates(self.symbol, self.timeframe, self.bars, from_pos=1)
+        self._last_fetch_mono = now_ts  # record fetch time even if empty
         if candles is None or candles.empty:
             logger.warning("HTFBiasCache: no H4 data for %s", self.symbol)
             return

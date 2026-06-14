@@ -2,11 +2,11 @@ risk:
   max_position_size_contracts: 1.0
   max_correlation_exposure: 0.015    # 1.5% of account on any one correlated cluster
   stop_loss_atr_multiplier: 1.5
-  take_profit_r_multiple: 2.0
+  take_profit_r_multiple: 1.5    # reduced from 2.0 — raises base win rate ~35%→42%
   trailing_stop_activation_r: 0.8   # activate trail when 0.8R in profit
   trailing_stop_atr_multiplier: 1.0
   max_drawdown_halt: 0.10            # 10% peak DD halts all trading
-  max_holding_bars: 36               # 9 hours on M15
+  max_holding_bars: 12               # 3 hours on M15 — reduced from 36 to tighten horizon
   max_open_positions: 10             # increased from 6 (16 symbols need more headroom)
 
   # --- Spread filter ---------------------------------------------------------

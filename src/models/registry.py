@@ -175,7 +175,7 @@ class ModelRegistry:
             return False
 
         # Replace champion files with challenger files.
-        for fname in [_ENSEMBLE_FILE, _LSTM_FILE, _SUMMARY_FILE]:
+        for fname in ["ensemble.pkl", "ensemble_meta.json", "lgb.onnx", "xgb.onnx", "meta.onnx", _LSTM_FILE, _SUMMARY_FILE]:
             challenger_file = sym_dir / f"challenger_{fname}"
             if challenger_file.exists():
                 shutil.move(str(challenger_file), str(sym_dir / fname))
@@ -194,8 +194,7 @@ class ModelRegistry:
         for sym_dir in sorted(self.base_dir.iterdir()):
             if not sym_dir.is_dir():
                 continue
-            pkl = sym_dir / _ENSEMBLE_FILE
-            if not pkl.exists():
+            if not (sym_dir / "ensemble.pkl").exists() and not (sym_dir / "ensemble_meta.json").exists():
                 continue
             registry = self._load_registry(sym_dir.name)
             results.append({
@@ -206,7 +205,7 @@ class ModelRegistry:
                 "data_start":  registry.get("data_start", ""),
                 "data_end":    registry.get("data_end", ""),
                 "n_folds":     registry.get("n_folds", 0),
-                "has_challenger": (sym_dir / "challenger_ensemble.pkl").exists(),
+                "has_challenger": (sym_dir / "challenger_ensemble_meta.json").exists() or (sym_dir / "challenger_ensemble.pkl").exists(),
             })
         return results
 
@@ -224,7 +223,7 @@ class ModelRegistry:
 
     def has_champion(self, symbol: str) -> bool:
         """Return True if a trained champion exists for *symbol*."""
-        return (self._sym_dir(symbol) / _ENSEMBLE_FILE).exists()
+        return (self._sym_dir(symbol) / "ensemble_meta.json").exists() or (self._sym_dir(symbol) / "ensemble.pkl").exists()
 
     def champion_auc(self, symbol: str) -> Optional[float]:
         """Return the AUC of the saved champion, or None."""
@@ -255,16 +254,55 @@ class ModelRegistry:
     @staticmethod
     def _save_artifacts(artifacts: Dict, sym_dir: Path, prefix: str = "") -> None:
         """Persist ensemble artifacts to *sym_dir* with optional *prefix*."""
-        pkl_path = sym_dir / f"{prefix}{_ENSEMBLE_FILE}"
-        save_payload = {
-            "lightgbm":       artifacts.get("lightgbm"),
-            "xgboost":        artifacts.get("xgboost"),
-            "meta":           artifacts.get("meta"),
-            "feature_columns": artifacts.get("feature_columns"),
-            "lstm_timesteps": artifacts.get("lstm_timesteps"),
-        }
-        with open(pkl_path, "wb") as f:
-            pickle.dump(save_payload, f)
+        import json
+        try:
+            from skl2onnx import convert_sklearn
+            from skl2onnx.common.data_types import FloatTensorType as SklearnFloatTensorType
+            from onnxmltools.convert import convert_lightgbm, convert_xgboost
+            from onnxmltools.convert.common.data_types import FloatTensorType as OnnxmlFloatTensorType
+            import onnx
+            HAS_ONNX = True
+        except ImportError:
+            HAS_ONNX = False
+
+        if HAS_ONNX:
+            meta_info = {
+                "feature_columns": artifacts.get("feature_columns", []),
+                "lstm_timesteps": artifacts.get("lstm_timesteps", 20)
+            }
+            with open(sym_dir / f"{prefix}ensemble_meta.json", "w") as f:
+                json.dump(meta_info, f)
+
+            n_features = len(meta_info["feature_columns"])
+            initial_type_onnxml = [('float_input', OnnxmlFloatTensorType([None, n_features]))]
+
+            lgb_model = artifacts.get("lightgbm")
+            if lgb_model:
+                onnx.save(convert_lightgbm(lgb_model, initial_types=initial_type_onnxml), str(sym_dir / f"{prefix}lgb.onnx"))
+
+            xgb_model = artifacts.get("xgboost")
+            if xgb_model:
+                booster = xgb_model.get_booster()
+                if hasattr(booster, "feature_names") and booster.feature_names is not None:
+                    booster.feature_names = [f"f{i}" for i in range(len(booster.feature_names))]
+                onnx.save(convert_xgboost(xgb_model, initial_types=initial_type_onnxml), str(sym_dir / f"{prefix}xgb.onnx"))
+
+            meta_model = artifacts.get("meta")
+            if meta_model:
+                meta_initial_type = [('float_input', SklearnFloatTensorType([None, 3]))]
+                onnx.save(convert_sklearn(meta_model, initial_types=meta_initial_type, options={type(meta_model): {'zipmap': False}}), str(sym_dir / f"{prefix}meta.onnx"))
+        else:
+            import pickle
+            pkl_path = sym_dir / f"{prefix}ensemble.pkl"
+            save_payload = {
+                "lightgbm":       artifacts.get("lightgbm"),
+                "xgboost":        artifacts.get("xgboost"),
+                "meta":           artifacts.get("meta"),
+                "feature_columns": artifacts.get("feature_columns"),
+                "lstm_timesteps": artifacts.get("lstm_timesteps"),
+            }
+            with open(pkl_path, "wb") as f:
+                pickle.dump(save_payload, f)
 
         lstm = artifacts.get("lstm")
         if lstm is not None:

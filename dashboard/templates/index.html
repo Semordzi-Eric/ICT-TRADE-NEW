@@ -407,6 +407,7 @@
           <div style="display:flex;gap:8px;margin-top:8px">
             <button class="btn btn-success btn-lg" id="live-start-btn" onclick="Pages.live.start()">Start Live</button>
             <button class="btn btn-danger btn-lg" id="live-stop-btn" onclick="Pages.live.stop()" disabled>Stop</button>
+            <button class="btn btn-danger btn-lg" id="live-panic-btn" onclick="Pages.live.panic()" style="margin-left:auto; background:var(--danger); color:#fff">🚨 Close All & Halt</button>
           </div>
         </div>
 
@@ -415,6 +416,39 @@
             <button class="btn btn-sm btn-outline" onclick="Pages.live.clearLog()" style="margin-left:auto">Clear</button>
           </div>
           <div class="log-console" id="live-log-console"><span style="color:var(--text-3)">Start the executor to see live output…</span></div>
+        </div>
+      </div>
+
+      <div class="card mb-16">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Account & Open Positions</div>
+            <div class="card-sub">Real-time risk monitoring (Bot positions highlighted)</div>
+          </div>
+          <div style="margin-left:auto; display:flex; gap:16px; align-items:center;">
+            <div style="text-align:right">
+              <div style="font-size:11px; color:var(--text-3)">Total Floating PnL</div>
+              <div id="live-pnl" style="font-weight:600; font-size:16px">—</div>
+            </div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Ticket</th>
+                <th>Symbol</th>
+                <th>Type</th>
+                <th>Volume</th>
+                <th>Open Price</th>
+                <th>Current Price</th>
+                <th>Floating PnL</th>
+              </tr>
+            </thead>
+            <tbody id="live-positions-body">
+              <tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px">No open positions</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
 

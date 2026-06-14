@@ -1,6 +1,8 @@
 """Account-level risk management: loss limits, cooldowns, correlation."""
 from __future__ import annotations
 
+import threading
+import numpy as np
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -30,7 +32,24 @@ class RiskState:
 
 
 class RiskManager:
-    """Enforces account-level rules. Call :meth:`can_trade` before every entry."""
+    """Enforces account-level rules. Call :meth:`can_trade` before every entry.
+
+    Thread safety
+    -------------
+    ``can_trade`` and ``register_open`` are protected by ``_trade_gate`` (a
+    ``threading.Lock``).  Callers **must** hold this lock for the full
+    can_trade → place_order → register_open sequence to prevent the TOCTOU
+    race where two threads both see ``open_positions < max`` and both place
+    orders before either increments the counter.
+
+    Usage in the executor::
+
+        with risk_mgr.trade_gate:
+            ok, reason = risk_mgr.can_trade(...)
+            if ok:
+                # place order here
+                risk_mgr.register_open(symbol)
+    """
 
     def __init__(self, strategy_cfg: dict, risk_cfg: dict, account_balance: float):
         self.strategy_cfg = strategy_cfg
@@ -41,6 +60,9 @@ class RiskManager:
         self._current_week: Optional[int] = None
         # Adaptive-sizing state: True when win rate is in the low zone.
         self._in_low_wr_regime: bool = False
+        # FIX BUG-C3: lock that must be held for the entire can_trade →
+        # register_open critical section to prevent the TOCTOU race.
+        self.trade_gate = threading.Lock()
 
     # ---------- public API ----------
     def can_trade(
@@ -48,12 +70,21 @@ class RiskManager:
         now: datetime,
         symbol: str,
         proposed_volume: float,
+        floating_pnl: float = 0.0,
     ) -> Tuple[bool, str]:
-        """Check all gates. Returns ``(ok, reason)``."""
+        """Check all gates. Returns ``(ok, reason)``.
+
+        IMPORTANT: Callers must hold ``self.trade_gate`` while calling this
+        method AND the subsequent ``register_open()`` to avoid the TOCTOU race
+        on ``max_open_positions``.  See class docstring.
+        """
         self._roll_periods(now)
 
+        # FIX BUG-M6 (partial): halted due to *daily* loss limit is reset
+        # at the start of a new trading day (handled in _roll_periods).
+        # Max-DD halt is permanent until manual restart.
         if self.state.halted:
-            return False, "account halted (max DD)"
+            return False, "account halted (max DD or daily loss — see logs)"
 
         # Cooldown
         if self.state.cooldown_until and now < self.state.cooldown_until:
@@ -65,11 +96,12 @@ class RiskManager:
 
         # Daily / weekly loss limits — measured against starting balance of period
         daily_limit = float(self.strategy_cfg["daily_loss_limit"]) * self.balance
-        if self.state.daily_pnl <= -daily_limit:
-            return False, "daily loss limit hit"
+        if self.state.daily_pnl + floating_pnl <= -daily_limit:
+            self.state.halted = True
+            return False, "daily loss limit hit (incl floating)"
         weekly_limit = float(self.strategy_cfg["weekly_loss_limit"]) * self.balance
-        if self.state.weekly_pnl <= -weekly_limit:
-            return False, "weekly loss limit hit"
+        if self.state.weekly_pnl + floating_pnl <= -weekly_limit:
+            return False, "weekly loss limit hit (incl floating)"
 
         # Drawdown halt
         max_dd = float(self.risk_cfg.get("max_drawdown_halt", 0.10))
@@ -149,6 +181,69 @@ class RiskManager:
             mult *= kz_mult
         return float(mult)
 
+    def compute_optimal_risk(
+        self,
+        ml_probability:      float,
+        threshold:           float,
+        current_atr:         float,
+        reference_atr:       float,
+        in_killzone:         bool = False,
+        kelly_fraction:      float = 0.25,
+    ) -> float:
+        """Institutional-grade risk computation combining Kelly, vol-targeting, and confidence.
+
+        Args:
+            ml_probability:  model output probability (0-1).
+            threshold:       optimal entry threshold (from PF optimizer).
+            current_atr:     current bar ATR (used for vol scaling).
+            reference_atr:   rolling 100-bar ATR (reference vol level).
+            in_killzone:     True if entry is inside London/NY killzone.
+            kelly_fraction:  fraction of full Kelly to bet (default 0.25 = quarter-Kelly).
+
+        Returns:
+            Risk fraction as a float (e.g. 0.0035 = 0.35% of account).
+        """
+        base_risk = float(self.strategy_cfg.get("risk_per_trade", 0.0035))
+
+        # --- 1. Fractional Kelly ---
+        # Win probability estimate from ML (calibrated probability)
+        p_win   = float(np.clip(ml_probability, 0.01, 0.99))
+        rr      = float(self.strategy_cfg.get("rr_ratio", 1.5))
+        b       = rr          # odds: win rr for every 1 lost
+        kelly   = (b * p_win - (1 - p_win)) / b
+        kelly   = max(kelly, 0.0)  # never short the Kelly fraction
+        kelly_risk = base_risk * min(kelly / 0.15, 2.0) * kelly_fraction
+        # Normalise: assume optimal base_risk corresponds to Kelly ≈ 0.15
+        # (i.e., a 42% win rate, 1.5 RR system)
+
+        # --- 2. Volatility Targeting ---
+        # Scale down when current vol > reference vol
+        if reference_atr > 1e-9 and current_atr > 1e-9:
+            vol_ratio    = reference_atr / current_atr   # < 1 when vol is elevated
+            vol_adj      = float(np.clip(vol_ratio, 0.5, 1.5))
+        else:
+            vol_adj = 1.0
+
+        # --- 3. Confidence Scaling ---
+        # Scale by how far probability is above threshold (capped at +50%)
+        if threshold > 0 and ml_probability > threshold:
+            excess_prob  = (ml_probability - threshold) / max(1.0 - threshold, 0.01)
+            conf_mult    = 1.0 + min(excess_prob, 1.0) * 0.5  # up to 1.5×
+        else:
+            conf_mult = 1.0
+
+        # --- 4. Adaptive sizing multiplier (low win-rate regime) ---
+        from datetime import datetime as _dt
+        adapt_mult = self.adaptive_risk_multiplier(_dt.utcnow(), in_killzone)
+
+        # --- Final: combine all factors ---
+        optimal_risk = kelly_risk * vol_adj * conf_mult * adapt_mult
+
+        # Hard bounds
+        max_risk = float(self.strategy_cfg.get("max_risk_per_trade", 0.01))
+        min_risk = float(self.strategy_cfg.get("min_risk_per_trade", 0.001))
+        return float(np.clip(optimal_risk, min_risk, max_risk))
+
     def register_open(self, symbol: str) -> None:
         self.state.open_symbols.add(symbol)
         self.state.daily_trades += 1
@@ -190,6 +285,15 @@ class RiskManager:
             self.state.daily_pnl = 0.0
             self.state.daily_trades = 0
             self._current_day = day
+            # FIX BUG-M6: Reset the daily-loss-triggered halt at the start of
+            # each new trading day so the bot can resume after overnight reset.
+            # Max-DD halts are intentionally permanent (require manual restart).
+            max_dd = float(self.risk_cfg.get("max_drawdown_halt", 0.10))
+            if self.state.halted and self.state.peak_balance > 0:
+                current_dd = (self.state.peak_balance - self.balance) / self.state.peak_balance
+                if current_dd < max_dd:
+                    # Not in a max-DD state — halt was triggered by daily limit, clear it.
+                    self.state.halted = False
         if self._current_week != week:
             self.state.weekly_pnl = 0.0
             self._current_week = week

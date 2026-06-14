@@ -8,7 +8,9 @@ detection:
   choch_swing_lookback: 5
   equal_hl_tolerance_atr: 0.001
   liquidity_lookback: 400
-  ob_lookback: 1000000
+  # FIX BUG-M4: ob_lookback=1000000 caused unbounded memory usage and O(n²)
+  # iteration over all detected blocks. 500 gives ample recent-OB coverage.
+  ob_lookback: 500
   session_times:
     london: ["08:00", "17:00"]
     newyork: ["13:00", "22:00"]

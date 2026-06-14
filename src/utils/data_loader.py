@@ -121,6 +121,7 @@ def load_from_mt5_since(
     """
     try:
         from ..live.mt5_client import HAS_MT5, MT5Client
+        # pyrefly: ignore [missing-import]
         import MetaTrader5 as _mt5
     except ImportError:
         return pd.DataFrame()

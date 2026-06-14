@@ -31,8 +31,14 @@ def train_lightgbm(
     y_val: pd.Series,
     params: Optional[Dict] = None,
     bayesian_iterations: int = 0,
+    sample_weight: Optional[np.ndarray] = None,
 ):
     """Train a LightGBM binary classifier; optionally tune hyperparams.
+
+    Args:
+        sample_weight: per-sample weights aligned to X_train/y_train.
+                       Pass confidence scores so high-conviction setups
+                       receive more gradient signal.
 
     Returns the trained booster (and best params if tuned).
     """
@@ -54,12 +60,15 @@ def train_lightgbm(
         base_params.update(params)
 
     if bayesian_iterations > 0 and HAS_SKOPT:
-        best_params = _bayesian_tune(X_train, y_train, X_val, y_val, base_params, bayesian_iterations)
+        best_params = _bayesian_tune(
+            X_train, y_train, X_val, y_val, base_params,
+            bayesian_iterations, sample_weight=sample_weight,
+        )
         base_params.update(best_params)
         logger.info("Bayesian-tuned params: %s", best_params)
 
-    train_set = lgb.Dataset(X_train, label=y_train)
-    val_set = lgb.Dataset(X_val, label=y_val, reference=train_set)
+    train_set = lgb.Dataset(X_train, label=y_train, weight=sample_weight)
+    val_set   = lgb.Dataset(X_val, label=y_val, reference=train_set)
     model = lgb.train(
         base_params,
         train_set,
@@ -77,6 +86,7 @@ def _bayesian_tune(
     y_val: pd.Series,
     base_params: Dict,
     n_iter: int,
+    sample_weight=None,
 ) -> Dict:
     space = [
         Integer(15, 127, name="num_leaves"),
@@ -88,13 +98,13 @@ def _bayesian_tune(
 
     def objective(values):
         params = dict(base_params)
-        params["num_leaves"] = int(values[0])
-        params["learning_rate"] = float(values[1])
-        params["feature_fraction"] = float(values[2])
-        params["bagging_fraction"] = float(values[3])
-        params["min_data_in_leaf"] = int(values[4])
-        train_set = lgb.Dataset(X_train, label=y_train)
-        val_set = lgb.Dataset(X_val, label=y_val, reference=train_set)
+        params["num_leaves"]        = int(values[0])
+        params["learning_rate"]     = float(values[1])
+        params["feature_fraction"]  = float(values[2])
+        params["bagging_fraction"]  = float(values[3])
+        params["min_data_in_leaf"]  = int(values[4])
+        train_set = lgb.Dataset(X_train, label=y_train, weight=sample_weight)
+        val_set   = lgb.Dataset(X_val,   label=y_val, reference=train_set)
         m = lgb.train(
             params,
             train_set,
@@ -103,10 +113,13 @@ def _bayesian_tune(
             callbacks=[lgb.early_stopping(20), lgb.log_evaluation(0)],
         )
         preds = m.predict(X_val)
-        # Minimise log loss
-        eps = 1e-15
-        preds = np.clip(preds, eps, 1 - eps)
-        return float(-np.mean(y_val * np.log(preds) + (1 - y_val) * np.log(1 - preds)))
+        # Maximise ROC-AUC (negate for minimiser).
+        try:
+            from sklearn.metrics import roc_auc_score
+            auc = float(roc_auc_score(y_val, preds))
+        except Exception:
+            auc = 0.5
+        return -auc   # gp_minimize minimises; negate to maximise AUC
 
     result = gp_minimize(objective, space, n_calls=n_iter, random_state=42)
     return {

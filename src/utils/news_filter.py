@@ -27,22 +27,8 @@ import re
 
 logger = logging.getLogger(__name__)
 
-# Currencies that each symbol affects (used for news relevance matching).
-_SYMBOL_CURRENCIES: dict = {
-    "EURUSD": ["EUR", "USD"],
-    "GBPUSD": ["GBP", "USD"],
-    "USDJPY": ["USD", "JPY"],
-    "AUDUSD": ["AUD", "USD"],
-    "NZDUSD": ["NZD", "USD"],
-    "USDCAD": ["USD", "CAD"],
-    "USDCHF": ["USD", "CHF"],
-    "EURGBP": ["EUR", "GBP"],
-    "EURJPY": ["EUR", "JPY"],
-    "GBPJPY": ["GBP", "JPY"],
-    "NAS100":  ["USD"],
-    "SPX500":  ["USD"],
-    "XAUUSD":  ["USD"],
-}
+from .constants import COUNTRY_CURRENCY_MAP as _COUNTRY_CURRENCY_MAP
+from .constants import SYMBOL_CURRENCIES as _SYMBOL_CURRENCIES
 
 FEED_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
 HIGH_IMPACT_VALUES = {"High", "high", "HIGH"}
@@ -62,29 +48,9 @@ class NewsEvent:
         return f"NewsEvent({self.dt.isoformat()} {self.country} '{self.title}' [{self.impact}])"
 
 
-# Country-code → ISO currency
-_COUNTRY_CURRENCY: dict = {
-    "US": "USD",
-    "USD": "USD",
-    "EU": "EUR",
-    "EUR": "EUR",
-    "UK": "GBP",
-    "GBP": "GBP",
-    "JP": "JPY",
-    "JPY": "JPY",
-    "AU": "AUD",
-    "AUD": "AUD",
-    "NZ": "NZD",
-    "NZD": "NZD",
-    "CA": "CAD",
-    "CAD": "CAD",
-    "CH": "CHF",
-    "CHF": "CHF",
-}
-
 
 def _country_to_currency(country: str) -> str:
-    return _COUNTRY_CURRENCY.get(country.upper(), country.upper())
+    return _COUNTRY_CURRENCY_MAP.get(country.upper(), country.upper())
 
 
 def _parse_feed(xml_text: str) -> List[NewsEvent]:
@@ -96,7 +62,8 @@ def _parse_feed(xml_text: str) -> List[NewsEvent]:
         logger.error("Failed to parse news XML: %s", exc)
         return events
 
-    current_year = datetime.utcnow().year
+    now_utc = datetime.utcnow()
+    current_year = now_utc.year
 
     for item in root.findall("eventitem"):
         country_el = item.find("country")
@@ -116,7 +83,13 @@ def _parse_feed(xml_text: str) -> List[NewsEvent]:
 
         try:
             # FF date format: "Tuesday Jan 05" or "Thursday Jan 07"
+            # BUG-M1 FIX: weeks that span year-end (e.g. Dec 28 – Jan 3) must
+            # parse January events with next_year, not current_year.
             dt = datetime.strptime(f"{date_s} {current_year}", "%A %b %d %Y")
+            # If the parsed date is more than 6 days in the past, it likely
+            # belongs to next year (year-rollover week).
+            if (now_utc - dt).days > 6:
+                dt = datetime.strptime(f"{date_s} {current_year + 1}", "%A %b %d %Y")
             # Time: "8:30am" / "12:00pm" / "All Day"
             if re.match(r"\d{1,2}:\d{2}[ap]m", time_s, re.IGNORECASE):
                 t = datetime.strptime(time_s.lower(), "%I:%M%p")

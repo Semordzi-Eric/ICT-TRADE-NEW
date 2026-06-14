@@ -52,6 +52,7 @@ def run_backtest(
     starting_balance: float = 10_000.0,
     risk_per_trade: float = 0.005,
     slippage_pips: float = 0.5,
+    spread_pips: float = 1.0,
     pip_size: float = 0.0001,
     commission_per_lot: float = 5.0,
     contract_value: float = 100_000.0,
@@ -68,6 +69,8 @@ def run_backtest(
         starting_balance: account balance at t0.
         risk_per_trade: fraction of balance risked on each trade.
         slippage_pips: applied to both entry and exit, in the adverse direction.
+        spread_pips: bid-ask spread cost applied at entry (half-spread on each side).
+                     Set this per-instrument (e.g. 50 for BTCUSD, 10 for NAS100).
         pip_size: price units per pip (0.0001 for typical FX, adapt for indices).
         commission_per_lot: round-turn cost in account currency.
         contract_value: notional per 1.0 volume (100k for FX).
@@ -80,6 +83,9 @@ def run_backtest(
     open_ = candles["open"].values
     n = len(candles)
     slippage = slippage_pips * pip_size
+    # Half-spread cost applied adversely at entry; represent the realistic
+    # bid-ask cost that was not previously modelled at all.
+    spread_cost = (spread_pips / 2.0) * pip_size
     balance = starting_balance
     equity = pd.Series(starting_balance, index=candles.index, dtype=float)
 
@@ -182,8 +188,8 @@ def run_backtest(
             # Execute at this bar's open (realistic; avoids same-bar lookahead).
             raw_entry = open_[i]
             entry_price = (
-                raw_entry + slippage if sig.direction == "long"
-                else raw_entry - slippage
+                raw_entry + slippage + spread_cost if sig.direction == "long"
+                else raw_entry - slippage - spread_cost
             )
             vol = position_size(
                 balance, risk_per_trade,

@@ -67,8 +67,12 @@ class TestModelRegistry:
         promoted = reg.evaluate_and_promote("XAUUSD", arts, _metrics(0.80, 0.70))
         assert promoted is False  # requires manual approval
         assert abs(reg.champion_auc("XAUUSD") - 0.58) < 1e-3  # old champion retained
-        # Challenger file should exist.
-        assert (tmp_path / "XAUUSD" / "challenger_ensemble.pkl").exists()
+        # Challenger file should exist (pkl when onnx not installed, json meta when onnx available).
+        has_challenger = (
+            (tmp_path / "XAUUSD" / "challenger_ensemble.pkl").exists()
+            or (tmp_path / "XAUUSD" / "challenger_ensemble_meta.json").exists()
+        )
+        assert has_challenger, "Expected challenger artifact to be saved"
 
     def test_leaderboard_sorted(self, tmp_path):
         reg = ModelRegistry(base_dir=str(tmp_path))

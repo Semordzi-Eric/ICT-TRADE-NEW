@@ -1,5 +1,5 @@
 strategy:
-  # ----- Universe (16 markets) -----------------------------------------------
+  # ----- Universe (11 markets) -----------------------------------------------
   # FX Majors, Minors, Metals, Indices, Crypto CFDs.
   # Each symbol's pip_size / spread limit / session type is in market_config.yaml.
   symbols:
@@ -9,32 +9,39 @@ strategy:
     - USDJPY
     - AUDUSD
     - USDCAD
-    - NZDUSD
     # FX Minors
-    - EURGBP
     - EURJPY
     - GBPJPY
     # Metals
     - XAUUSD
-    - XAGUSD
     # Equity Indices (CFD)
     - US100
     - US500
-    - US30
     # Crypto CFDs
     - BTCUSD
-    - ETHUSD
+    # Removed: NZDUSD  — high spread/ATR ratio, thin ICT signal yield
+    # Removed: EURGBP  — too slow-moving, insufficient setup frequency
+    # Removed: XAGUSD  — wide spread / thin liquidity
+    # Removed: US30    — redundant with US100, very wide spread
+    # Removed: ETHUSD  — follows BTC, limited independent alpha
 
   default_timeframe: M15
 
   # ----- Per-trade & portfolio risk -------------------------------------------
-  risk_per_trade: 0.0035          # 0.35% per trade — scales per symbol via adaptive sizing
-  max_daily_trades: 30            # aggregate across all 16 symbols (was 12 for 3 symbols)
+  risk_per_trade: 0.0035          # 0.35% base risk — scaled per symbol via Kelly + vol-targeting
+  max_risk_per_trade: 0.010       # hard cap: never risk more than 1% per trade
+  min_risk_per_trade: 0.001       # floor: always risk at least 0.1% per trade
+  rr_ratio: 1.5                   # aligned with labels.py and model_config.yaml
+  kelly_fraction: 0.25            # quarter-Kelly for long-run safety
+  max_daily_trades: 30            # aggregate across all 13 symbols
   daily_loss_limit: 0.03          # 3% daily DD halt
   weekly_loss_limit: 0.06         # 6% weekly DD halt
   consecutive_loss_limit: 3
   consecutive_loss_cooldown_hours: 4
-  min_model_probability: 0.65
+  # min_model_probability is now set dynamically per symbol from the
+  # Profit-Factor threshold optimizer stored in ensemble_meta.json.
+  # The value below is only used as a fallback when no optimized threshold exists.
+  min_model_probability: 0.62   # fallback; optimizer will override per-symbol
 
   # ----- Killzone filter -------------------------------------------------------
   # FX / Metals: restrict to London open and NY open.
@@ -66,14 +73,11 @@ strategy:
   # ----- Correlation filter ---------------------------------------------------
   correlation_filter_pairs:
     - ["EURUSD", "GBPUSD", 0.85]
-    - ["AUDUSD", "NZDUSD", 0.90]
     - ["EURUSD", "AUDUSD", 0.70]
     - ["USDJPY", "USDCAD", 0.65]
-    - ["NAS100", "SPX500", 0.95]
-    - ["NAS100", "US30",   0.90]
-    - ["BTCUSD", "ETHUSD", 0.85]
-    - ["XAUUSD", "XAGUSD", 0.80]
+    - ["US100",  "US500",  0.95]
     - ["EURJPY", "GBPJPY", 0.80]
+    - ["BTCUSD", "XAUUSD", 0.60]
 
   # ----- Intuition Mode --------------------------------------------------------
   # When ML probability < min_model_probability, the bot can still fire a trade

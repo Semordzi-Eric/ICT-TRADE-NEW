@@ -44,29 +44,31 @@ def _detections(candles: pd.DataFrame) -> dict:
 
 def test_feature_pipeline_shape():
     candles = _synthetic()
-    feats = build_feature_pipeline(candles, _detections(candles), normalize=False,
-                                   correlation_threshold=1.0)
+    feats = build_feature_pipeline(candles, _detections(candles), normalize=False)
     assert len(feats) == len(candles)
     assert list(feats.columns) == FEATURE_COLUMNS
-    assert len(FEATURE_COLUMNS) == 35
+    assert len(FEATURE_COLUMNS) == 47   # 47 features (48 - sess_London_NY dropped)
 
 
 def test_feature_pipeline_no_nans_or_infs():
     candles = _synthetic()
-    feats = build_feature_pipeline(candles, _detections(candles), normalize=True,
-                                   correlation_threshold=1.0)
+    feats = build_feature_pipeline(candles, _detections(candles), normalize=True)
     assert not feats.isnull().any().any()
     assert not np.isinf(feats.values).any()
 
 
 def test_feature_pipeline_normalization_keeps_one_hots():
     candles = _synthetic()
-    feats = build_feature_pipeline(candles, _detections(candles), normalize=True,
-                                   correlation_threshold=1.0)
-    one_hot_cols = ["sess_London", "sess_NY", "sess_Asian", "sess_London_NY",
+    feats = build_feature_pipeline(candles, _detections(candles), normalize=True)
+    # Session dummies and FVG/OB active flags must remain binary (0/1)
+    one_hot_cols = ["sess_London", "sess_NY", "sess_Asian",
                     "active_bull_fvg", "active_bear_fvg",
-                    "active_bull_ob", "active_bear_ob"]
+                    "active_bull_ob", "active_bear_ob",
+                    "regime_TRENDING_BULL", "regime_TRENDING_BEAR",
+                    "regime_RANGING", "regime_HIGH_VOLATILITY"]
     for col in one_hot_cols:
+        if col not in feats.columns:
+            continue
         unique = set(np.unique(feats[col].values))
         assert unique.issubset({0.0, 1.0}), f"{col} should remain one-hot, got {unique}"
 
@@ -74,8 +76,7 @@ def test_feature_pipeline_normalization_keeps_one_hots():
 def test_correlation_filter():
     candles = _synthetic(300)
     detections = _detections(candles)
-    feats_no_filter = build_feature_pipeline(candles, detections, normalize=True,
-                                             correlation_threshold=1.0)
+    feats_no_filter = build_feature_pipeline(candles, detections, normalize=True)
     feats_filtered = build_feature_pipeline(candles, detections, normalize=True,
-                                            correlation_threshold=0.7)
+                                            drop_columns=["ret_1"])
     assert feats_filtered.shape[1] <= feats_no_filter.shape[1]

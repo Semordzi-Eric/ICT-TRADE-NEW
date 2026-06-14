@@ -27,7 +27,6 @@ from typing import Dict, List, Optional
 import pandas as pd
 import yaml
 
-from ..backtest.metrics import compute_metrics  # noqa: F401
 from ..detection.fvg import detect_fvg
 from ..detection.liquidity import detect_equal_highs_lows, detect_liquidity_sweeps
 from ..detection.orderblock import detect_order_blocks
@@ -58,9 +57,9 @@ _DEFAULT_PIP_SIZE = 0.0001
 _EQUITY_SESSION_START = dt_time(13, 30)
 _EQUITY_SESSION_END   = dt_time(20, 0)
 
-# Metal session (near-24/7, CME — approximate).
-_METAL_SESSION_START = dt_time(23, 0)  # Sunday open
-_METAL_SESSION_END   = dt_time(21, 0)  # Friday close (next day wrap)
+# Maximum allowed absolute risk multiplier (caps all chained multipliers).
+# BUG-H2 FIX: Without this cap, sentiment(2×) * intuition(2×) = 4× base risk.
+_MAX_RISK_MULT = 2.0
 
 
 def _pip_size(symbol: str) -> float:
@@ -306,6 +305,10 @@ class LiveExecutor:
             logger.info("[%s] Pre-event warning: risk reduced to %.1f%%", symbol, risk_mult * 100)
 
         base_risk    = float(self.strategy_cfg.get("risk_per_trade", 0.0035))
+        # FIX BUG-H2: Cap the absolute risk multiplier so that sentiment(2×)
+        # chained with intuition(2×) and pre-event reduction cannot produce
+        # runaway position sizes.  _MAX_RISK_MULT = 2.0 by default.
+        risk_mult = min(risk_mult, _MAX_RISK_MULT)
         adjusted_risk = base_risk * risk_mult
 
         # --- Risk gates ---
@@ -316,20 +319,46 @@ class LiveExecutor:
             entry=sig.entry, stop_loss=sig.stop_loss,
             contract_value=contract_value,
         )
-        ok, reason = self.risk_mgr.can_trade(now, symbol, vol)
-        if not ok:
-            logger.info("[%s] Risk manager rejected: %s", symbol, reason)
+
+        # FIX BUG-H1: Guard against zero-volume orders before any risk check.
+        if vol <= 0:
+            logger.debug("[%s] position_size returned %.6f — skip", symbol, vol)
             return
 
-        # --- Place order ---
-        action = "buy" if sig.direction == "long" else "sell"
-        result = self.mt5.place_order(
-            symbol=symbol, action=action, volume=vol,
-            sl=sig.stop_loss, tp=sig.take_profit,
-        )
-        if result is not None:
-            ticket = int(result.get("order", 0))
-            with self._positions_lock:
+        # Calculate floating PnL for bot's positions
+        floating_pnl = 0.0
+        try:
+            open_positions = self.mt5.get_positions()
+            bot_tickets = set(self._bot_positions.keys())
+            for p in open_positions:
+                if int(p.get("ticket", 0)) in bot_tickets:
+                    floating_pnl += float(p.get("profit", 0.0))
+        except Exception as e:
+            logger.warning("[%s] Failed to fetch floating PnL: %s", symbol, e)
+
+        # FIX BUG-C3: Wrap can_trade + place_order + register_open in the
+        # trade_gate lock so that concurrent threads cannot both pass the
+        # max_open_positions check and both place orders.
+        with self.risk_mgr.trade_gate:
+            ok, reason = self.risk_mgr.can_trade(now, symbol, vol, floating_pnl=floating_pnl)
+            if not ok:
+                logger.info("[%s] Risk manager rejected: %s", symbol, reason)
+                return
+
+            # --- Place order ---
+            action = "buy" if sig.direction == "long" else "sell"
+            result = self.mt5.place_order(
+                symbol=symbol, action=action, volume=vol,
+                sl=sig.stop_loss, tp=sig.take_profit,
+            )
+
+            # FIX BUG-C4: Only register the position if the broker confirmed
+            # order placement (retcode == TRADE_RETCODE_DONE = 10009).
+            # Previously, any non-None result was treated as success.
+            retcode = result.get("retcode", -1) if result else -1
+            TRADE_RETCODE_DONE = 10009
+            if result is not None and retcode == TRADE_RETCODE_DONE:
+                ticket = int(result.get("order", 0))
                 self._bot_positions[ticket] = {
                     "symbol": symbol,
                     "entry":  sig.entry,
@@ -338,10 +367,18 @@ class LiveExecutor:
                     "contract_value": contract_value,
                     "intuition": intuition_result is not None,
                 }
-            self.risk_mgr.register_open(symbol)
-            logger.info("[%s] Order placed ticket=%d action=%s vol=%.4f %s",
-                        symbol, ticket, action, vol,
-                        "(INTUITION)" if intuition_result else "")
+                self.risk_mgr.register_open(symbol)
+                logger.info("[%s] Order placed ticket=%d action=%s vol=%.4f %s",
+                            symbol, ticket, action, vol,
+                            "(INTUITION)" if intuition_result else "")
+            elif result is not None:
+                logger.error(
+                    "[%s] Order REJECTED by broker (retcode=%d). "
+                    "No position registered. Check MT5 journal.",
+                    symbol, retcode,
+                )
+            else:
+                logger.error("[%s] place_order returned None — broker unreachable?", symbol)
 
     # ------------------------------------------------------------------ #
     #  Market-hours awareness                                              #
@@ -466,22 +503,23 @@ class LiveExecutor:
         with self._positions_lock:
             if not self._bot_positions:
                 return
-            bot_pos_keys = list(self._bot_positions.keys())
-            
+            # Take a snapshot of tracked tickets under lock.
+            bot_pos_snapshot = dict(self._bot_positions)
+
         try:
             open_positions = self.mt5.get_positions()
         except Exception:
             return
-            
+
         current_tickets = {int(p.get("ticket", 0)) for p in open_positions}
-        closed_tickets = [t for t in bot_pos_keys if t not in current_tickets]
-        
+        closed_tickets = [t for t in bot_pos_snapshot if t not in current_tickets]
+
         for ticket in closed_tickets:
             with self._positions_lock:
                 if ticket not in self._bot_positions:
                     continue
                 info = self._bot_positions.pop(ticket)
-                
+
             profit = self.mt5.get_deal_profit(ticket, lookback_days=self._deal_lookback_days)
             if profit is None:
                 profit = 0.0

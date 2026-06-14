@@ -43,33 +43,10 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
+from .constants import COUNTRY_CURRENCY_MAP as _COUNTRY_CURRENCY_MAP
+from .constants import SYMBOL_CURRENCIES as _SYMBOL_CURRENCIES
+
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Keyword polarity dictionaries
-# ---------------------------------------------------------------------------
-_BULLISH_WORDS = {
-    "surge", "rally", "rise", "gain", "beat", "record", "strong", "growth",
-    "bullish", "optimism", "recovery", "expansion", "hawkish", "rate hike",
-    "safe haven", "demand", "inflow", "breakout", "buy",
-}
-_BEARISH_WORDS = {
-    "fall", "drop", "decline", "miss", "weak", "loss", "recession", "crash",
-    "bearish", "pessimism", "contraction", "dovish", "rate cut", "sell-off",
-    "outflow", "concern", "risk off", "slowdown", "inflation fear", "sell",
-}
-
-# Map symbol → currencies for FF feed matching (extended).
-_SYMBOL_CURRENCIES: Dict[str, List[str]] = {
-    "EURUSD": ["EUR", "USD"], "GBPUSD": ["GBP", "USD"],
-    "USDJPY": ["USD", "JPY"], "AUDUSD": ["AUD", "USD"],
-    "USDCAD": ["USD", "CAD"], "NZDUSD": ["NZD", "USD"],
-    "EURGBP": ["EUR", "GBP"], "EURJPY": ["EUR", "JPY"],
-    "GBPJPY": ["GBP", "JPY"],
-    "XAUUSD": ["USD"],        "XAGUSD": ["USD"],
-    "NAS100": ["USD"],        "SPX500": ["USD"], "US30": ["USD"],
-    "BTCUSD": ["BTC", "USD"], "ETHUSD": ["ETH", "USD"],
-}
 
 _FF_FEED_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
 _CRYPTOPANIC_URL = "https://cryptopanic.com/api/v1/posts/?auth_token={token}&currencies={currency}&kind=news&public=true"
@@ -400,7 +377,8 @@ class SentimentEngine:
             root = ET.fromstring(xml_text)
         except ET.ParseError:
             return events
-        current_year = datetime.utcnow().year
+        now_utc = datetime.utcnow()
+        current_year = now_utc.year
         for item in root.findall("eventitem"):
             def _t(tag):
                 el = item.find(tag)
@@ -412,7 +390,10 @@ class SentimentEngine:
             date_s  = _t("date")
             time_s  = _t("time") or "00:00am"
             try:
+                # BUG-M1 FIX: handle year-rollover weeks (Dec 28 – Jan 3).
                 dt = datetime.strptime(f"{date_s} {current_year}", "%A %b %d %Y")
+                if (now_utc - dt).days > 6:
+                    dt = datetime.strptime(f"{date_s} {current_year + 1}", "%A %b %d %Y")
                 if re.match(r"\d{1,2}:\d{2}[ap]m", time_s, re.IGNORECASE):
                     t = datetime.strptime(time_s.lower(), "%I:%M%p")
                     dt = dt.replace(hour=t.hour, minute=t.minute)
@@ -489,10 +470,17 @@ class SentimentEngine:
             pass  # market_config is optional
 
 
-# Country → currency mapping (shared with FF parser).
-_COUNTRY_CURRENCY_MAP: Dict[str, str] = {
-    "US": "USD", "USD": "USD", "EU": "EUR", "EUR": "EUR",
-    "UK": "GBP", "GBP": "GBP", "JP": "JPY", "JPY": "JPY",
-    "AU": "AUD", "AUD": "AUD", "NZ": "NZD", "NZD": "NZD",
-    "CA": "CAD", "CAD": "CAD", "CH": "CHF", "CHF": "CHF",
+
+# ---------------------------------------------------------------------------
+# Keyword polarity dictionaries (kept here for sentiment scoring)
+# ---------------------------------------------------------------------------
+_BULLISH_WORDS = {
+    "surge", "rally", "rise", "gain", "beat", "record", "strong", "growth",
+    "bullish", "optimism", "recovery", "expansion", "hawkish", "rate hike",
+    "safe haven", "demand", "inflow", "breakout", "buy",
+}
+_BEARISH_WORDS = {
+    "fall", "drop", "decline", "miss", "weak", "loss", "recession", "crash",
+    "bearish", "pessimism", "contraction", "dovish", "rate cut", "sell-off",
+    "outflow", "concern", "risk off", "slowdown", "inflation fear", "sell",
 }

@@ -20,7 +20,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -113,21 +115,29 @@ def _train_symbol(symbol, strategy_cfg, risk_cfg, det_cfg, model_cfg, data_years
         logger.warning("%s: no signals generated — skipping", symbol)
         return None
 
-    from src.features.labels import signals_to_setups, label_signals
+    from src.features.labels import create_labels
     from src.strategy.rule_based import signals_to_setups as sts
     setups = sts(signals)
-    labels = label_signals(candles, setups)
-    feats = build_feature_pipeline(candles, detections, normalize=True)
+    labels_df = create_labels(setups, candles)
+    if labels_df.empty:
+        logger.warning("%s: no labels generated — skipping", symbol)
+        return None
 
-    common = feats.index.intersection(labels.index)
-    feats = feats.loc[common]
-    labels = labels.loc[common]
+    feats_full = build_feature_pipeline(candles, detections, normalize=True)
+    feats = feats_full.iloc[labels_df["index"].values]
+    feats.index = candles.index[labels_df["index"].values]
+
+    import pandas as pd
+    labels = pd.Series(labels_df["binary"].values, index=feats.index, name="target")
+    # Extract confidence scores: fast wins → 1.0, time-stops → 0.0
+    confidence = pd.Series(labels_df["confidence"].values, index=feats.index, name="confidence")
 
     result = train_walk_forward(
         feats, labels, model_cfg,
         output_dir="models_artifacts",
         symbol=symbol,
         data_years=data_years,
+        confidence=confidence,
     )
     promoted = registry.evaluate_and_promote(
         symbol,
@@ -180,6 +190,28 @@ def _benchmark_symbol(symbol, strategy_cfg, risk_cfg, det_cfg, registry):
     }
 
 
+# ---------------------------------------------------------------------------
+# Parallel worker helpers (must be module-level for pickling)
+# ---------------------------------------------------------------------------
+
+def _train_symbol_worker(args_tuple):
+    """Top-level wrapper so ProcessPoolExecutor can pickle it."""
+    sym, strategy_cfg, risk_cfg, det_cfg, model_cfg, data_years = args_tuple
+    # Re-import registry inside worker process
+    from src.models.registry import ModelRegistry as _Reg
+    registry = _Reg()
+    return sym, _train_symbol(sym, strategy_cfg, risk_cfg, det_cfg, model_cfg,
+                              data_years, registry)
+
+
+def _benchmark_symbol_worker(args_tuple):
+    """Top-level wrapper so ProcessPoolExecutor can pickle it."""
+    sym, strategy_cfg, risk_cfg, det_cfg = args_tuple
+    from src.models.registry import ModelRegistry as _Reg
+    registry = _Reg()
+    return _benchmark_symbol(sym, strategy_cfg, risk_cfg, det_cfg, registry)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark all market champions")
     parser.add_argument("--train", action="store_true",
@@ -192,30 +224,68 @@ def main():
                         help="Path to save JSON results (default: logs/market_benchmark_<date>.json)")
     parser.add_argument("--symbols", nargs="*",
                         help="Specific symbols to benchmark (default: all in strategy_config)")
+    parser.add_argument("--workers", type=int, default=0,
+                        help="Max parallel workers (default: auto = min(CPU count, symbols))")
     args = parser.parse_args()
 
     strategy_cfg, risk_cfg, det_cfg, model_cfg, market_cfg = _load_configs()
     registry = ModelRegistry()
     symbols = args.symbols or strategy_cfg.get("symbols", [])
 
-    # --- Optional training pass ---
-    if args.train or args.train_all:
-        for sym in symbols:
-            if args.train_all or not registry.has_champion(sym):
-                logger.info("=== Training %s ===", sym)
-                _train_symbol(sym, strategy_cfg, risk_cfg, det_cfg, model_cfg,
-                              args.data_years, registry)
+    # Determine worker count
+    cpu_count = os.cpu_count() or 1
+    max_workers = args.workers if args.workers > 0 else min(cpu_count, len(symbols))
+    max_workers = max(1, max_workers)
 
-    # --- Benchmark pass ---
-    logger.info("=== Benchmarking %d symbols ===", len(symbols))
+    # --- Optional training pass (parallel) ---
+    if args.train or args.train_all:
+        to_train = [
+            sym for sym in symbols
+            if args.train_all or not registry.has_champion(sym)
+        ]
+        if to_train:
+            logger.info(
+                "=== Training %d symbol(s) in parallel (workers=%d) ===",
+                len(to_train), min(max_workers, len(to_train)),
+            )
+            worker_args = [
+                (sym, strategy_cfg, risk_cfg, det_cfg, model_cfg, args.data_years)
+                for sym in to_train
+            ]
+            with ProcessPoolExecutor(max_workers=min(max_workers, len(to_train))) as pool:
+                futures = {pool.submit(_train_symbol_worker, a): a[0] for a in worker_args}
+                for future in as_completed(futures):
+                    sym = futures[future]
+                    try:
+                        sym_out, result = future.result()
+                        if result:
+                            logger.info("=== Finished training %s ===", sym_out)
+                        else:
+                            logger.warning("=== Training skipped for %s ===", sym_out)
+                    except Exception as exc:
+                        logger.error("=== Training FAILED for %s: %s ===", sym, exc)
+
+    # --- Benchmark pass (parallel) ---
+    logger.info("=== Benchmarking %d symbols (workers=%d) ===",
+                len(symbols), min(max_workers, len(symbols)))
     rows = []
-    for sym in symbols:
-        logger.info("Benchmarking %s ...", sym)
-        r = _benchmark_symbol(sym, strategy_cfg, risk_cfg, det_cfg, registry)
-        if r:
-            rows.append(r)
-        else:
-            logger.warning("%s: no data or no signals — skipped", sym)
+    bench_args = [
+        (sym, strategy_cfg, risk_cfg, det_cfg)
+        for sym in symbols
+    ]
+    with ProcessPoolExecutor(max_workers=min(max_workers, len(symbols))) as pool:
+        futures = {pool.submit(_benchmark_symbol_worker, a): a[0] for a in bench_args}
+        for future in as_completed(futures):
+            sym = futures[future]
+            try:
+                r = future.result()
+                if r:
+                    rows.append(r)
+                    logger.info("Benchmarked %s", sym)
+                else:
+                    logger.warning("%s: no data or no signals — skipped", sym)
+            except Exception as exc:
+                logger.error("Benchmark FAILED for %s: %s", sym, exc)
 
     if not rows:
         logger.error("No results — check that data files exist in data/")

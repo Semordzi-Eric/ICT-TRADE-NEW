@@ -167,6 +167,49 @@ class MT5Client:
             logger.error("Order failed retcode=%s comment=%s", result.retcode, result.comment)
         return result._asdict() if hasattr(result, "_asdict") else dict(result)
 
+    def modify_order(
+        self,
+        ticket: int,
+        sl: Optional[float] = None,
+        tp: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Modify the SL and/or TP of an open position by ticket number.
+
+        This enables live trailing-stop adjustments.  Returns the broker
+        result dict on success, or None if the request fails / MT5 is
+        unavailable.
+
+        Args:
+            ticket: the position ticket to modify.
+            sl: new stop-loss price, or None to leave unchanged.
+            tp: new take-profit price, or None to leave unchanged.
+        """
+        if not HAS_MT5 or not self.connected:
+            logger.warning("modify_order called but MT5 is not connected.")
+            return None
+        positions = mt5.positions_get(ticket=ticket)
+        if not positions:
+            logger.warning("modify_order: ticket %d not found in open positions", ticket)
+            return None
+        pos = positions[0]
+        request: Dict[str, Any] = {
+            "action":   mt5.TRADE_ACTION_SLTP,
+            "position": int(ticket),
+            "symbol":   pos.symbol,
+            "sl":       float(sl) if sl is not None else float(pos.sl),
+            "tp":       float(tp) if tp is not None else float(pos.tp),
+        }
+        result = mt5.order_send(request)
+        if result is None:
+            logger.error("modify_order order_send returned None: %s", mt5.last_error())
+            return None
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            logger.error(
+                "modify_order failed ticket=%d retcode=%s comment=%s",
+                ticket, result.retcode, result.comment,
+            )
+        return result._asdict() if hasattr(result, "_asdict") else dict(result)
+
     def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         if not HAS_MT5 or not self.connected:
             return []
